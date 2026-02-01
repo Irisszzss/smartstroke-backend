@@ -1,3 +1,6 @@
+// ✅ Load environment variables from .env file
+require('dotenv').config();
+
 const express = require('express');
 const mongoose = require('mongoose');
 const multer = require('multer');
@@ -16,15 +19,20 @@ if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 app.use('/uploads', express.static(uploadDir));
 
 // --- MongoDB Connection ---
-// ✅ UPDATED: Using your specific Atlas Connection String as default
-const ATLAS_URI = "mongodb+srv://Irisszzss:abcd_1234@cluster0.hltihwn.mongodb.net/smartstroke?retryWrites=true&w=majority&appName=Cluster0";
+// 🔒 SECURED: Credentials are now loaded from the Environment Variable.
+// 1. Locally: Read from the .env file (which is ignored by git).
+// 2. Cloud: Read from Render's Environment Variables.
+const MONGO_URI = process.env.MONGO_URI;
 
-// Check if we are in Cloud (Render) or Local. Use Atlas for both if Env var is missing.
-const MONGO_URI = process.env.MONGO_URI || ATLAS_URI;
-
-mongoose.connect(MONGO_URI)
-  .then(() => console.log("✅ MongoDB Connected"))
-  .catch(err => console.log("❌ MongoDB Connection Error:", err));
+if (!MONGO_URI) {
+  console.error("❌ FATAL ERROR: MONGO_URI is not defined.");
+  console.error("   - If running locally, ensure you have a '.env' file.");
+  console.error("   - If running on Render, ensure 'MONGO_URI' is in Environment Variables.");
+} else {
+  mongoose.connect(MONGO_URI)
+    .then(() => console.log("✅ MongoDB Connected"))
+    .catch(err => console.log("❌ MongoDB Connection Error:", err));
+}
 
 // --- Schemas ---
 const UserSchema = new mongoose.Schema({
