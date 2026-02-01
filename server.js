@@ -3,7 +3,6 @@ const mongoose = require('mongoose');
 const multer = require('multer');
 const cors = require('cors');
 const fs = require('fs');
-const bcrypt = require('bcryptjs');
 
 const app = express();
 const PORT = 3000;
