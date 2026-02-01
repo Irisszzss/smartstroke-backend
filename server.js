@@ -1,11 +1,10 @@
-// ✅ Load environment variables from .env file (for local development)
 require('dotenv').config();
-
 const express = require('express');
 const mongoose = require('mongoose');
 const multer = require('multer');
 const cors = require('cors');
 const fs = require('fs');
+const bcrypt = require('bcryptjs'); // ✅ Restored for password security
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,30 +13,26 @@ const TEACHER_SECRET_CODE = "TEACHER2024";
 // --- Middleware ---
 app.use(cors());
 app.use(express.json());
+
 const uploadDir = './uploads';
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 app.use('/uploads', express.static(uploadDir));
 
-// --- MongoDB Atlas Connection ---
-// 🔒 SECURED: We now read from the environment variable ONLY.
-// No hardcoded passwords here.
+// --- MongoDB Connection ---
 const MONGO_URI = process.env.MONGO_URI;
 
 if (!MONGO_URI) {
-  console.error("❌ FATAL ERROR: MONGO_URI is not defined.");
-  console.error("   1. Create a file named '.env' in your backend folder.");
-  console.error("   2. Add this line inside: MONGO_URI=your_connection_string");
-  process.exit(1); // Stop the server to prevent errors
+    console.error("❌ MONGO_URI is missing in .env or Render Environment Variables!");
+} else {
+    mongoose.connect(MONGO_URI)
+        .then(() => console.log("✅ MongoDB Connected"))
+        .catch(err => console.log("❌ MongoDB Error:", err));
 }
-
-mongoose.connect(MONGO_URI)
-  .then(() => console.log("✅ MongoDB Connected to Atlas (Cloud)"))
-  .catch(err => console.log("❌ MongoDB Connection Error:", err));
 
 // --- Schemas ---
 const UserSchema = new mongoose.Schema({
-    firebaseUid: { type: String, required: true, unique: true },
-    email: String,
+    username: { type: String, required: true, unique: true }, // Using username/email as ID
+    password: { type: String, required: true },
     name: String,
     role: { type: String, enum: ['teacher', 'student'], required: true }
 });
@@ -65,25 +60,54 @@ const upload = multer({ storage: storage });
 
 // --- ROUTES ---
 
-// Auth Sync (Firebase -> MongoDB)
-app.post('/auth/sync', async (req, res) => {
-    const { firebaseUid, email, name, role, secretCode } = req.body;
+// ✅ REGISTER (MongoDB Only)
+app.post('/register', async (req, res) => {
+    const { username, password, name, role, secretCode } = req.body;
     try {
-        let user = await User.findOne({ firebaseUid });
-        if (!user) {
-            if (role === 'teacher' && secretCode !== TEACHER_SECRET_CODE) {
-                return res.status(403).json({ error: "Invalid Teacher Secret Code" });
-            }
-            user = new User({ firebaseUid, email, name, role });
-            await user.save();
-        } 
-        res.json(user);
+        // Check if user exists
+        const existing = await User.findOne({ username });
+        if (existing) return res.status(400).json({ error: "Username/Email already exists" });
+
+        if (role === 'teacher' && secretCode !== TEACHER_SECRET_CODE) {
+            return res.status(403).json({ error: "Invalid Teacher Secret Code" });
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const newUser = new User({ username, password: hashedPassword, name, role });
+        await newUser.save();
+
+        res.json({ 
+            success: true, 
+            userId: newUser._id, 
+            name: newUser.name, 
+            role: newUser.role 
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// Class & File Routes
+// ✅ LOGIN (MongoDB Only)
+app.post('/login', async (req, res) => {
+    const { username, password } = req.body;
+    try {
+        const user = await User.findOne({ username });
+        if (!user) return res.status(400).json({ error: "User not found" });
+
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) return res.status(400).json({ error: "Invalid credentials" });
+
+        res.json({ 
+            success: true, 
+            userId: user._id, 
+            name: user.name, 
+            role: user.role 
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.post('/create-class', async (req, res) => {
     const { name, teacherId } = req.body;
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -131,9 +155,11 @@ app.delete('/class/:classId/file/:fileId', async (req, res) => {
     try {
         const { classId, fileId } = req.params;
         const classroom = await Classroom.findById(classId);
+        if (!classroom) return res.status(404).json({ error: "Class not found" });
+
         const fileIndex = classroom.files.findIndex(f => f._id.toString() === fileId);
         if (fileIndex === -1) return res.status(404).json({ error: "File not found" });
-        
+
         const filePath = classroom.files[fileIndex].path;
         if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
@@ -154,6 +180,17 @@ app.put('/class/:classId/file/:fileId', async (req, res) => {
         await classroom.save();
         res.json({ message: "File renamed" });
     } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Resets database for testing
+app.get('/reset', async (req, res) => {
+    try {
+        await User.deleteMany({});
+        await Classroom.deleteMany({});
+        res.send("Database Wiped!");
+    } catch (err) {
+        res.status(500).send(err.message);
+    }
 });
 
 app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
