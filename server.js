@@ -18,13 +18,11 @@ app.use(express.json());
 // --- STATIC FILE SERVING FIX ---
 // This serves the root of your project so that 'uploads/filename.pdf' 
 // stored in the DB matches the actual file path on the server.
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// Ensure upload directory exists
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
 }
+app.use('/uploads', express.static(uploadDir));
 
 // --- MongoDB Connection ---
 const MONGO_URI = process.env.MONGO_URI;
