@@ -70,6 +70,39 @@ const upload = multer({
 
 // --- ROUTES ---
 
+// ✅ UPDATE USER PROFILE
+app.put('/user/:userId', async (req, res) => {
+    const { name, username, password } = req.body;
+    try {
+        const user = await User.findById(req.params.userId);
+        if (!user) return res.status(404).json({ error: "User not found" });
+
+        // If username is changing, check for duplicates
+        if (username && username.toLowerCase() !== user.username) {
+            const existing = await User.findOne({ username: username.toLowerCase() });
+            if (existing) return res.status(400).json({ error: "Username already exists" });
+            user.username = username.toLowerCase();
+        }
+
+        if (name) user.name = name;
+
+        // Hash new password if provided
+        if (password && password.trim() !== "") {
+            user.password = await bcrypt.hash(password, 10);
+        }
+
+        await user.save();
+        res.json({ 
+            success: true, 
+            name: user.name, 
+            username: user.username,
+            role: user.role
+        });
+    } catch (err) {
+        res.status(500).json({ error: "Update failed: " + err.message });
+    }
+});
+
 app.post('/register', async (req, res) => {
     const { username, password, name, role, secretCode } = req.body;
     try {
@@ -149,7 +182,6 @@ app.get('/classes/:userId/:role', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ✅ GET ALL ENROLLED STUDENTS FOR A CLASS
 app.get('/class/:classId/students', async (req, res) => {
     try {
         const classroom = await Classroom.findById(req.params.classId);
@@ -165,7 +197,6 @@ app.get('/class/:classId/students', async (req, res) => {
     }
 });
 
-// ✅ REMOVE A STUDENT FROM A CLASS
 app.post('/class/:classId/remove-student', async (req, res) => {
     const { studentId } = req.body;
     try {
