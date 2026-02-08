@@ -187,7 +187,7 @@ app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
         if (!classroom) return res.status(404).json({ error: "Class not found" });
 
         // IMPORTANT: We store only the filename-relative path
-        const relativePath = `uploads/${req.file.filename}`;
+        const relativePath = `/uploads/${req.file.filename}`;
         
         classroom.files.push({ 
             filename: req.file.originalname, 
