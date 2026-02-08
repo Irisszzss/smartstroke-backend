@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const multer = require('multer');
 const cors = require('cors');
 const fs = require('fs');
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcryptjs'); // ✅ Restored for password security
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -22,25 +22,19 @@ app.use('/uploads', express.static(uploadDir));
 const MONGO_URI = process.env.MONGO_URI;
 
 if (!MONGO_URI) {
-    console.error("❌ MONGO_URI is missing!");
+    console.error("❌ MONGO_URI is missing in .env or Render Environment Variables!");
 } else {
     mongoose.connect(MONGO_URI)
         .then(() => console.log("✅ MongoDB Connected"))
         .catch(err => console.log("❌ MongoDB Error:", err));
 }
 
-// --- SCHEMAS ---
-
+// --- Schemas ---
 const UserSchema = new mongoose.Schema({
-    username: { type: String, required: true, unique: true },
+    username: { type: String, required: true, unique: true }, // Using username/email as ID
     password: { type: String, required: true },
     name: String,
-    role: { type: String, enum: ['teacher', 'student'], required: true },
-    personalNotes: [{
-        filename: String,
-        path: String,
-        uploadDate: { type: Date, default: Date.now }
-    }]
+    role: { type: String, enum: ['teacher', 'student'], required: true }
 });
 const User = mongoose.model('User', UserSchema);
 
@@ -57,7 +51,7 @@ const ClassSchema = new mongoose.Schema({
 });
 const Classroom = mongoose.model('Classroom', ClassSchema);
 
-// --- File Upload Logic ---
+// --- File Upload ---
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadDir),
     filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname.replace(/\s+/g, '_'))
@@ -66,98 +60,54 @@ const upload = multer({ storage: storage });
 
 // --- ROUTES ---
 
-// 1. Auth: Register
+// ✅ REGISTER (MongoDB Only)
 app.post('/register', async (req, res) => {
     const { username, password, name, role, secretCode } = req.body;
     try {
+        // Check if user exists
         const existing = await User.findOne({ username });
         if (existing) return res.status(400).json({ error: "Username/Email already exists" });
+
         if (role === 'teacher' && secretCode !== TEACHER_SECRET_CODE) {
             return res.status(403).json({ error: "Invalid Teacher Secret Code" });
         }
+
         const hashedPassword = await bcrypt.hash(password, 10);
-        const newUser = new User({ username, password: hashedPassword, name, role, personalNotes: [] });
+        const newUser = new User({ username, password: hashedPassword, name, role });
         await newUser.save();
-        res.json({ success: true, userId: newUser._id, name: newUser.name, role: newUser.role });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+
+        res.json({ 
+            success: true, 
+            userId: newUser._id, 
+            name: newUser.name, 
+            role: newUser.role 
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-// 2. Auth: Login
+// ✅ LOGIN (MongoDB Only)
 app.post('/login', async (req, res) => {
     const { username, password } = req.body;
     try {
         const user = await User.findOne({ username });
         if (!user) return res.status(400).json({ error: "User not found" });
+
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) return res.status(400).json({ error: "Invalid credentials" });
-        res.json({ success: true, userId: user._id, name: user.name, role: user.role });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
 
-// 3. PERSONAL NOTES: Fetch
-app.get('/personal-notes/:userId', async (req, res) => {
-    try {
-        const { userId } = req.params;
-        // Validate ID format to prevent internal 500 errors
-        if (!mongoose.Types.ObjectId.isValid(userId)) {
-            return res.status(400).json({ error: "Invalid User ID format" });
-        }
-        const user = await User.findById(userId);
-        if (!user) return res.status(404).json({ error: "Teacher not found" });
-        res.json({ notes: user.personalNotes || [] });
-    } catch (err) {
-        console.error("Fetch Personal Notes Error:", err);
-        res.status(500).json({ error: "Server error fetching notes" });
-    }
-});
-
-// 4. PERSONAL NOTES: Upload (Teacher Private Storage)
-app.post('/upload-personal/:userId', upload.single('pdf'), async (req, res) => {
-    try {
-        const { userId } = req.params;
-        if (!mongoose.Types.ObjectId.isValid(userId)) {
-            return res.status(400).json({ error: "Invalid User ID format" });
-        }
-        const user = await User.findById(userId);
-        if (!user) return res.status(404).json({ error: "Teacher not found" });
-
-        user.personalNotes.push({ 
-            filename: req.file.originalname, 
-            path: req.file.path 
+        res.json({ 
+            success: true, 
+            userId: user._id, 
+            name: user.name, 
+            role: user.role 
         });
-        await user.save();
-        res.json({ success: true });
     } catch (err) {
-        console.error("Upload Personal Error:", err);
-        res.status(500).json({ error: "Server error during upload" });
+        res.status(500).json({ error: err.message });
     }
 });
 
-// 5. PERSONAL NOTES: Publish/Share to Class
-app.post('/share-to-class', async (req, res) => {
-    try {
-        const { classId, fileData } = req.body;
-        if (!mongoose.Types.ObjectId.isValid(classId)) {
-            return res.status(400).json({ error: "Invalid Class ID format" });
-        }
-        const classroom = await Classroom.findById(classId);
-        if (!classroom) return res.status(404).json({ error: "Class not found" });
-        
-        // Transfer metadata from personal record to classroom record
-        classroom.files.push({
-            filename: fileData.filename,
-            path: fileData.path,
-            uploadDate: new Date()
-        });
-        await classroom.save();
-        res.json({ success: true, message: "Shared with enrolled students!" });
-    } catch (err) {
-        console.error("Sharing Error:", err);
-        res.status(500).json({ error: "Server error during sharing" });
-    }
-});
-
-// 6. CLASSES: Create
 app.post('/create-class', async (req, res) => {
     const { name, teacherId } = req.body;
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -168,7 +118,6 @@ app.post('/create-class', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// 7. CLASSES: Join
 app.post('/join-class', async (req, res) => {
     const { studentId, classCode } = req.body;
     try {
@@ -182,7 +131,6 @@ app.post('/join-class', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// 8. CLASSES: Fetch List
 app.get('/classes/:userId/:role', async (req, res) => {
     const { userId, role } = req.params;
     try {
@@ -193,7 +141,6 @@ app.get('/classes/:userId/:role', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// 9. CLASSES: Direct Upload
 app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
     try {
         const classroom = await Classroom.findById(req.params.classId);
@@ -204,7 +151,6 @@ app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// 10. CLASSES: Delete File
 app.delete('/class/:classId/file/:fileId', async (req, res) => {
     try {
         const { classId, fileId } = req.params;
@@ -223,13 +169,28 @@ app.delete('/class/:classId/file/:fileId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// 11. Testing: Wipe Database
+app.put('/class/:classId/file/:fileId', async (req, res) => {
+    try {
+        const { classId, fileId } = req.params;
+        const { newName } = req.body;
+        const classroom = await Classroom.findById(classId);
+        const file = classroom.files.id(fileId);
+        if (!file) return res.status(404).json({ error: "File not found" });
+        file.filename = newName;
+        await classroom.save();
+        res.json({ message: "File renamed" });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Resets database for testing
 app.get('/reset', async (req, res) => {
     try {
         await User.deleteMany({});
         await Classroom.deleteMany({});
         res.send("Database Wiped!");
-    } catch (err) { res.status(500).send(err.message); }
+    } catch (err) {
+        res.status(500).send(err.message);
+    }
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server running on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
