@@ -15,18 +15,17 @@ const TEACHER_SECRET_CODE = "TEACHER2024";
 app.use(cors());
 app.use(express.json());
 
-// Ensure upload directory exists and serve it statically
+// Static File Serving
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
 }
-app.use('/uploads', express.static(uploadDir));
 
 // --- MongoDB Connection ---
 const MONGO_URI = process.env.MONGO_URI;
-
 if (!MONGO_URI) {
-    console.error("❌ MONGO_URI is missing! Check your .env file.");
+    console.error("❌ MONGO_URI is missing!");
 } else {
     mongoose.connect(MONGO_URI)
         .then(() => console.log("✅ MongoDB Connected Successfully"))
@@ -36,10 +35,19 @@ if (!MONGO_URI) {
 // --- Schemas ---
 const UserSchema = new mongoose.Schema({
     username: { type: String, required: true, unique: true, trim: true, lowercase: true },
+    email: { type: String, required: true, unique: true, trim: true, lowercase: true },
     password: { type: String, required: true },
-    name: { type: String, required: true },
+    firstName: { type: String, required: true },
+    middleInitial: { type: String, default: "" },
+    surname: { type: String, required: true },
     role: { type: String, enum: ['teacher', 'student'], required: true }
+}, { toJSON: { virtuals: true }, toObject: { virtuals: true } });
+
+// Virtual for "name" to keep compatibility with existing frontend code
+UserSchema.virtual('name').get(function() {
+    return `${this.firstName} ${this.middleInitial ? this.middleInitial + '. ' : ''}${this.surname}`;
 });
+
 const User = mongoose.model('User', UserSchema);
 
 const ClassSchema = new mongoose.Schema({
@@ -63,30 +71,33 @@ const storage = multer.diskStorage({
         cb(null, `${Date.now()}-${cleanName}`);
     }
 });
-const upload = multer({ 
-    storage: storage,
-    limits: { fileSize: 10 * 1024 * 1024 } 
-});
+const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
 
 // --- ROUTES ---
 
 // ✅ UPDATE USER PROFILE
 app.put('/user/:userId', async (req, res) => {
-    const { name, username, password } = req.body;
+    const { firstName, middleInitial, surname, username, email, password } = req.body;
     try {
         const user = await User.findById(req.params.userId);
         if (!user) return res.status(404).json({ error: "User not found" });
 
-        // If username is changing, check for duplicates
         if (username && username.toLowerCase() !== user.username) {
             const existing = await User.findOne({ username: username.toLowerCase() });
-            if (existing) return res.status(400).json({ error: "Username already exists" });
+            if (existing) return res.status(400).json({ error: "Username taken" });
             user.username = username.toLowerCase();
         }
 
-        if (name) user.name = name;
+        if (email && email.toLowerCase() !== user.email) {
+            const existing = await User.findOne({ email: email.toLowerCase() });
+            if (existing) return res.status(400).json({ error: "Email taken" });
+            user.email = email.toLowerCase();
+        }
 
-        // Hash new password if provided
+        if (firstName) user.firstName = firstName;
+        if (middleInitial !== undefined) user.middleInitial = middleInitial;
+        if (surname) user.surname = surname;
+
         if (password && password.trim() !== "") {
             user.password = await bcrypt.hash(password, 10);
         }
@@ -94,8 +105,13 @@ app.put('/user/:userId', async (req, res) => {
         await user.save();
         res.json({ 
             success: true, 
-            name: user.name, 
+            userId: user._id,
+            name: user.name, // Returns the virtual name
+            firstName: user.firstName,
+            middleInitial: user.middleInitial,
+            surname: user.surname,
             username: user.username,
+            email: user.email,
             role: user.role
         });
     } catch (err) {
@@ -104,35 +120,45 @@ app.put('/user/:userId', async (req, res) => {
 });
 
 app.post('/register', async (req, res) => {
-    const { username, password, name, role, secretCode } = req.body;
+    const { username, email, password, firstName, middleInitial, surname, role, secretCode } = req.body;
     try {
-        const existing = await User.findOne({ username: username.toLowerCase() });
-        if (existing) return res.status(400).json({ error: "Username already exists" });
+        const existingUser = await User.findOne({ $or: [{ username: username.toLowerCase() }, { email: email.toLowerCase() }] });
+        if (existingUser) return res.status(400).json({ error: "Username or Email already exists" });
 
         if (role === 'teacher' && secretCode !== TEACHER_SECRET_CODE) {
             return res.status(403).json({ error: "Invalid Teacher Secret Code" });
         }
 
         const hashedPassword = await bcrypt.hash(password, 10);
-        const newUser = new User({ username, password: hashedPassword, name, role });
+        const newUser = new User({ 
+            username: username.toLowerCase(), 
+            email: email.toLowerCase(), 
+            password: hashedPassword, 
+            firstName, 
+            middleInitial, 
+            surname, 
+            role 
+        });
         await newUser.save();
 
-        res.json({ 
-            success: true, 
-            userId: newUser._id, 
-            name: newUser.name, 
-            role: newUser.role 
-        });
+        res.json({ success: true, userId: newUser._id, name: newUser.name, role: newUser.role });
     } catch (err) {
         res.status(500).json({ error: "Registration failed: " + err.message });
     }
 });
 
+// ✅ UPDATED LOGIN: Supports Username or Email
 app.post('/login', async (req, res) => {
-    const { username, password } = req.body;
+    const { username, password } = req.body; // 'username' here represents the identifier input
     try {
-        const user = await User.findOne({ username: username.toLowerCase() });
-        if (!user) return res.status(400).json({ error: "User not found" });
+        const user = await User.findOne({ 
+            $or: [
+                { username: username.toLowerCase() }, 
+                { email: username.toLowerCase() }
+            ] 
+        });
+
+        if (!user) return res.status(400).json({ error: "Account not found" });
 
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) return res.status(400).json({ error: "Invalid credentials" });
@@ -140,13 +166,20 @@ app.post('/login', async (req, res) => {
         res.json({ 
             success: true, 
             userId: user._id, 
-            name: user.name, 
+            name: user.name,
+            firstName: user.firstName,
+            middleInitial: user.middleInitial,
+            surname: user.surname,
+            username: user.username,
+            email: user.email,
             role: user.role 
         });
     } catch (err) {
         res.status(500).json({ error: "Login failed" });
     }
 });
+
+
 
 app.post('/create-class', async (req, res) => {
     const { name, teacherId } = req.body;
@@ -163,7 +196,6 @@ app.post('/join-class', async (req, res) => {
     try {
         const classroom = await Classroom.findOne({ code: classCode.toUpperCase() });
         if (!classroom) return res.status(404).json({ error: "Class not found" });
-        
         if (!classroom.students.includes(studentId)) {
             classroom.students.push(studentId);
             await classroom.save();
@@ -185,45 +217,26 @@ app.get('/classes/:userId/:role', async (req, res) => {
 app.get('/class/:classId/students', async (req, res) => {
     try {
         const classroom = await Classroom.findById(req.params.classId);
-        if (!classroom) return res.status(404).json({ error: "Class not found" });
-
-        const students = await User.find(
-            { _id: { $in: classroom.students } },
-            'name username' 
-        );
+        const students = await User.find({ _id: { $in: classroom.students } }, 'firstName surname username email');
         res.json(students);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/class/:classId/remove-student', async (req, res) => {
     const { studentId } = req.body;
     try {
         const classroom = await Classroom.findById(req.params.classId);
-        if (!classroom) return res.status(404).json({ error: "Class not found" });
-
         classroom.students = classroom.students.filter(id => id.toString() !== studentId);
         await classroom.save();
-
-        res.json({ message: "Student removed successfully" });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+        res.json({ message: "Student removed" });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
     try {
         const classroom = await Classroom.findById(req.params.classId);
-        if (!classroom) return res.status(404).json({ error: "Class not found" });
-
         const relativePath = `uploads/${req.file.filename}`;
-        
-        classroom.files.push({ 
-            filename: req.file.originalname, 
-            path: relativePath 
-        });
-        
+        classroom.files.push({ filename: req.file.originalname, path: relativePath });
         await classroom.save();
         res.json({ message: "Success", file: relativePath });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -233,32 +246,12 @@ app.delete('/class/:classId/file/:fileId', async (req, res) => {
     try {
         const { classId, fileId } = req.params;
         const classroom = await Classroom.findById(classId);
-        if (!classroom) return res.status(404).json({ error: "Class not found" });
-
         const file = classroom.files.id(fileId);
-        if (!file) return res.status(404).json({ error: "File not found" });
-
         const fullPath = path.join(__dirname, file.path);
         if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
-
         file.deleteOne();
         await classroom.save();
-        
-        res.json({ message: "File deleted successfully" });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.put('/class/:classId/file/:fileId', async (req, res) => {
-    try {
-        const { classId, fileId } = req.params;
-        const { newName } = req.body;
-        const classroom = await Classroom.findById(classId);
-        const file = classroom.files.id(fileId);
-        if (!file) return res.status(404).json({ error: "File not found" });
-        
-        file.filename = newName;
-        await classroom.save();
-        res.json({ message: "File renamed" });
+        res.json({ message: "File deleted" });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -268,7 +261,6 @@ app.get('/reset', async (req, res) => {
         await Classroom.deleteMany({});
         const files = fs.readdirSync(uploadDir);
         for (const file of files) fs.unlinkSync(path.join(uploadDir, file));
-        
         res.send("Database and Files Wiped!");
     } catch (err) { res.status(500).send(err.message); }
 });
