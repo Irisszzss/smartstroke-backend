@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const multer = require('multer');
 const cors = require('cors');
 const fs = require('fs');
-const path = require('path'); // Added for robust path handling
+const path = require('path');
 const bcrypt = require('bcryptjs');
 
 const app = express();
@@ -20,7 +20,6 @@ const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
 }
-// This makes http://your-url/uploads/filename.pdf accessible
 app.use('/uploads', express.static(uploadDir));
 
 // --- MongoDB Connection ---
@@ -36,7 +35,8 @@ if (!MONGO_URI) {
 
 // --- Schemas ---
 const UserSchema = new mongoose.Schema({
-    username: { type: String, required: true, unique: true, trim: true.toLowerCase() },
+    // FIXED: trim and lowercase are separate boolean options in Mongoose
+    username: { type: String, required: true, unique: true, trim: true, lowercase: true },
     password: { type: String, required: true },
     name: { type: String, required: true },
     role: { type: String, enum: ['teacher', 'student'], required: true }
@@ -50,7 +50,7 @@ const ClassSchema = new mongoose.Schema({
     students: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     files: [{
         filename: String,
-        path: String, // Stores the relative path (e.g., uploads/123.pdf)
+        path: String, 
         uploadDate: { type: Date, default: Date.now }
     }]
 });
@@ -60,23 +60,21 @@ const Classroom = mongoose.model('Classroom', ClassSchema);
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadDir),
     filename: (req, file, cb) => {
-        // Remove spaces and add timestamp to prevent collisions
         const cleanName = file.originalname.replace(/\s+/g, '_');
         cb(null, `${Date.now()}-${cleanName}`);
     }
 });
 const upload = multer({ 
     storage: storage,
-    limits: { fileSize: 10 * 1024 * 1024 } // 10MB Limit
+    limits: { fileSize: 10 * 1024 * 1024 } 
 });
 
 // --- ROUTES ---
 
-// ✅ REGISTER
 app.post('/register', async (req, res) => {
     const { username, password, name, role, secretCode } = req.body;
     try {
-        const existing = await User.findOne({ username });
+        const existing = await User.findOne({ username: username.toLowerCase() });
         if (existing) return res.status(400).json({ error: "Username already exists" });
 
         if (role === 'teacher' && secretCode !== TEACHER_SECRET_CODE) {
@@ -98,11 +96,10 @@ app.post('/register', async (req, res) => {
     }
 });
 
-// ✅ LOGIN
 app.post('/login', async (req, res) => {
     const { username, password } = req.body;
     try {
-        const user = await User.findOne({ username });
+        const user = await User.findOne({ username: username.toLowerCase() });
         if (!user) return res.status(400).json({ error: "User not found" });
 
         const isMatch = await bcrypt.compare(password, user.password);
@@ -119,7 +116,6 @@ app.post('/login', async (req, res) => {
     }
 });
 
-// ✅ CREATE CLASS
 app.post('/create-class', async (req, res) => {
     const { name, teacherId } = req.body;
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -130,7 +126,6 @@ app.post('/create-class', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ✅ JOIN CLASS
 app.post('/join-class', async (req, res) => {
     const { studentId, classCode } = req.body;
     try {
@@ -145,7 +140,6 @@ app.post('/join-class', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ✅ GET USER CLASSES
 app.get('/classes/:userId/:role', async (req, res) => {
     const { userId, role } = req.params;
     try {
@@ -156,13 +150,11 @@ app.get('/classes/:userId/:role', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ✅ UPLOAD PDF (Fixed Path Handling)
 app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
     try {
         const classroom = await Classroom.findById(req.params.classId);
         if (!classroom) return res.status(404).json({ error: "Class not found" });
 
-        // Normalize path to use forward slashes for URLs
         const relativePath = `uploads/${req.file.filename}`;
         
         classroom.files.push({ 
@@ -175,7 +167,6 @@ app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ✅ DELETE FILE (Fixed Mongoose Pull)
 app.delete('/class/:classId/file/:fileId', async (req, res) => {
     try {
         const { classId, fileId } = req.params;
@@ -185,11 +176,9 @@ app.delete('/class/:classId/file/:fileId', async (req, res) => {
         const file = classroom.files.id(fileId);
         if (!file) return res.status(404).json({ error: "File not found" });
 
-        // Delete from physical storage
         const fullPath = path.join(__dirname, file.path);
         if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
 
-        // Remove sub-document
         file.deleteOne();
         await classroom.save();
         
@@ -197,7 +186,6 @@ app.delete('/class/:classId/file/:fileId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ✅ RENAME FILE
 app.put('/class/:classId/file/:fileId', async (req, res) => {
     try {
         const { classId, fileId } = req.params;
@@ -212,12 +200,10 @@ app.put('/class/:classId/file/:fileId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ✅ RESET DB (For Testing Only)
 app.get('/reset', async (req, res) => {
     try {
         await User.deleteMany({});
         await Classroom.deleteMany({});
-        // Optional: Clean uploads folder too
         const files = fs.readdirSync(uploadDir);
         for (const file of files) fs.unlinkSync(path.join(uploadDir, file));
         
