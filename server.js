@@ -4,7 +4,8 @@ const mongoose = require('mongoose');
 const multer = require('multer');
 const cors = require('cors');
 const fs = require('fs');
-const bcrypt = require('bcryptjs'); // ✅ Restored for password security
+const path = require('path'); // Added for robust path handling
+const bcrypt = require('bcryptjs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,59 +15,69 @@ const TEACHER_SECRET_CODE = "TEACHER2024";
 app.use(cors());
 app.use(express.json());
 
-const uploadDir = './uploads';
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+// Ensure upload directory exists and serve it statically
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+}
+// This makes http://your-url/uploads/filename.pdf accessible
 app.use('/uploads', express.static(uploadDir));
 
 // --- MongoDB Connection ---
 const MONGO_URI = process.env.MONGO_URI;
 
 if (!MONGO_URI) {
-    console.error("❌ MONGO_URI is missing in .env or Render Environment Variables!");
+    console.error("❌ MONGO_URI is missing! Check your .env file.");
 } else {
     mongoose.connect(MONGO_URI)
-        .then(() => console.log("✅ MongoDB Connected"))
-        .catch(err => console.log("❌ MongoDB Error:", err));
+        .then(() => console.log("✅ MongoDB Connected Successfully"))
+        .catch(err => console.error("❌ MongoDB Connection Error:", err));
 }
 
 // --- Schemas ---
 const UserSchema = new mongoose.Schema({
-    username: { type: String, required: true, unique: true }, // Using username/email as ID
+    username: { type: String, required: true, unique: true, trim: true.toLowerCase() },
     password: { type: String, required: true },
-    name: String,
+    name: { type: String, required: true },
     role: { type: String, enum: ['teacher', 'student'], required: true }
 });
 const User = mongoose.model('User', UserSchema);
 
 const ClassSchema = new mongoose.Schema({
-    name: String,
-    teacherId: String,
+    name: { type: String, required: true },
+    teacherId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     code: { type: String, unique: true },
-    students: [String],
+    students: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     files: [{
         filename: String,
-        path: String,
+        path: String, // Stores the relative path (e.g., uploads/123.pdf)
         uploadDate: { type: Date, default: Date.now }
     }]
 });
 const Classroom = mongoose.model('Classroom', ClassSchema);
 
-// --- File Upload ---
+// --- File Upload Configuration ---
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadDir),
-    filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname.replace(/\s+/g, '_'))
+    filename: (req, file, cb) => {
+        // Remove spaces and add timestamp to prevent collisions
+        const cleanName = file.originalname.replace(/\s+/g, '_');
+        cb(null, `${Date.now()}-${cleanName}`);
+    }
 });
-const upload = multer({ storage: storage });
+const upload = multer({ 
+    storage: storage,
+    limits: { fileSize: 10 * 1024 * 1024 } // 10MB Limit
+});
 
 // --- ROUTES ---
 
-// ✅ REGISTER (MongoDB Only)
+// ✅ REGISTER
 app.post('/register', async (req, res) => {
     const { username, password, name, role, secretCode } = req.body;
     try {
-        // Check if user exists
         const existing = await User.findOne({ username });
-        if (existing) return res.status(400).json({ error: "Username/Email already exists" });
+        if (existing) return res.status(400).json({ error: "Username already exists" });
 
         if (role === 'teacher' && secretCode !== TEACHER_SECRET_CODE) {
             return res.status(403).json({ error: "Invalid Teacher Secret Code" });
@@ -83,11 +94,11 @@ app.post('/register', async (req, res) => {
             role: newUser.role 
         });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: "Registration failed: " + err.message });
     }
 });
 
-// ✅ LOGIN (MongoDB Only)
+// ✅ LOGIN
 app.post('/login', async (req, res) => {
     const { username, password } = req.body;
     try {
@@ -104,10 +115,11 @@ app.post('/login', async (req, res) => {
             role: user.role 
         });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: "Login failed" });
     }
 });
 
+// ✅ CREATE CLASS
 app.post('/create-class', async (req, res) => {
     const { name, teacherId } = req.body;
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -118,11 +130,13 @@ app.post('/create-class', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ✅ JOIN CLASS
 app.post('/join-class', async (req, res) => {
     const { studentId, classCode } = req.body;
     try {
-        const classroom = await Classroom.findOne({ code: classCode });
+        const classroom = await Classroom.findOne({ code: classCode.toUpperCase() });
         if (!classroom) return res.status(404).json({ error: "Class not found" });
+        
         if (!classroom.students.includes(studentId)) {
             classroom.students.push(studentId);
             await classroom.save();
@@ -131,44 +145,59 @@ app.post('/join-class', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ✅ GET USER CLASSES
 app.get('/classes/:userId/:role', async (req, res) => {
     const { userId, role } = req.params;
     try {
-        let classes;
-        if (role === 'teacher') classes = await Classroom.find({ teacherId: userId });
-        else classes = await Classroom.find({ students: userId });
+        let classes = (role === 'teacher') 
+            ? await Classroom.find({ teacherId: userId }) 
+            : await Classroom.find({ students: userId });
         res.json(classes);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ✅ UPLOAD PDF (Fixed Path Handling)
 app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
     try {
         const classroom = await Classroom.findById(req.params.classId);
         if (!classroom) return res.status(404).json({ error: "Class not found" });
-        classroom.files.push({ filename: req.file.originalname, path: req.file.path });
+
+        // Normalize path to use forward slashes for URLs
+        const relativePath = `uploads/${req.file.filename}`;
+        
+        classroom.files.push({ 
+            filename: req.file.originalname, 
+            path: relativePath 
+        });
+        
         await classroom.save();
-        res.json({ message: "Success" });
+        res.json({ message: "Success", file: relativePath });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ✅ DELETE FILE (Fixed Mongoose Pull)
 app.delete('/class/:classId/file/:fileId', async (req, res) => {
     try {
         const { classId, fileId } = req.params;
         const classroom = await Classroom.findById(classId);
         if (!classroom) return res.status(404).json({ error: "Class not found" });
 
-        const fileIndex = classroom.files.findIndex(f => f._id.toString() === fileId);
-        if (fileIndex === -1) return res.status(404).json({ error: "File not found" });
+        const file = classroom.files.id(fileId);
+        if (!file) return res.status(404).json({ error: "File not found" });
 
-        const filePath = classroom.files[fileIndex].path;
-        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        // Delete from physical storage
+        const fullPath = path.join(__dirname, file.path);
+        if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
 
-        classroom.files.splice(fileIndex, 1);
+        // Remove sub-document
+        file.deleteOne();
         await classroom.save();
-        res.json({ message: "File deleted" });
+        
+        res.json({ message: "File deleted successfully" });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ✅ RENAME FILE
 app.put('/class/:classId/file/:fileId', async (req, res) => {
     try {
         const { classId, fileId } = req.params;
@@ -176,21 +205,26 @@ app.put('/class/:classId/file/:fileId', async (req, res) => {
         const classroom = await Classroom.findById(classId);
         const file = classroom.files.id(fileId);
         if (!file) return res.status(404).json({ error: "File not found" });
+        
         file.filename = newName;
         await classroom.save();
         res.json({ message: "File renamed" });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Resets database for testing
+// ✅ RESET DB (For Testing Only)
 app.get('/reset', async (req, res) => {
     try {
         await User.deleteMany({});
         await Classroom.deleteMany({});
-        res.send("Database Wiped!");
-    } catch (err) {
-        res.status(500).send(err.message);
-    }
+        // Optional: Clean uploads folder too
+        const files = fs.readdirSync(uploadDir);
+        for (const file of files) fs.unlinkSync(path.join(uploadDir, file));
+        
+        res.send("Database and Files Wiped!");
+    } catch (err) { res.status(500).send(err.message); }
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 SmartStroke Server running on port ${PORT}`);
+});
