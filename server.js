@@ -16,9 +16,11 @@ app.use(cors());
 app.use(express.json());
 
 // --- STATIC FILE SERVING FIX ---
-// This serves the root directory so that 'uploads/filename.pdf' works correctly
+// This serves the root of your project so that 'uploads/filename.pdf' 
+// stored in the DB matches the actual file path on the server.
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// Ensure upload directory exists
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
@@ -26,12 +28,13 @@ if (!fs.existsSync(uploadDir)) {
 
 // --- MongoDB Connection ---
 const MONGO_URI = process.env.MONGO_URI;
+
 if (!MONGO_URI) {
-    console.error("❌ MONGO_URI is missing!");
+    console.error("❌ MONGO_URI is missing! Check your .env file.");
 } else {
     mongoose.connect(MONGO_URI)
-        .then(() => console.log("✅ MongoDB Connected"))
-        .catch(err => console.error("❌ MongoDB Error:", err));
+        .then(() => console.log("✅ MongoDB Connected Successfully"))
+        .catch(err => console.error("❌ MongoDB Connection Error:", err));
 }
 
 // --- Schemas ---
@@ -76,14 +79,24 @@ app.post('/register', async (req, res) => {
     try {
         const existing = await User.findOne({ username: username.toLowerCase() });
         if (existing) return res.status(400).json({ error: "Username already exists" });
+
         if (role === 'teacher' && secretCode !== TEACHER_SECRET_CODE) {
             return res.status(403).json({ error: "Invalid Teacher Secret Code" });
         }
+
         const hashedPassword = await bcrypt.hash(password, 10);
         const newUser = new User({ username, password: hashedPassword, name, role });
         await newUser.save();
-        res.json({ success: true, userId: newUser._id, name: newUser.name, role: newUser.role });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+
+        res.json({ 
+            success: true, 
+            userId: newUser._id, 
+            name: newUser.name, 
+            role: newUser.role 
+        });
+    } catch (err) {
+        res.status(500).json({ error: "Registration failed: " + err.message });
+    }
 });
 
 app.post('/login', async (req, res) => {
@@ -91,10 +104,19 @@ app.post('/login', async (req, res) => {
     try {
         const user = await User.findOne({ username: username.toLowerCase() });
         if (!user) return res.status(400).json({ error: "User not found" });
+
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) return res.status(400).json({ error: "Invalid credentials" });
-        res.json({ success: true, userId: user._id, name: user.name, role: user.role });
-    } catch (err) { res.status(500).json({ error: "Login failed" }); }
+
+        res.json({ 
+            success: true, 
+            userId: user._id, 
+            name: user.name, 
+            role: user.role 
+        });
+    } catch (err) {
+        res.status(500).json({ error: "Login failed" });
+    }
 });
 
 app.post('/create-class', async (req, res) => {
@@ -112,6 +134,7 @@ app.post('/join-class', async (req, res) => {
     try {
         const classroom = await Classroom.findOne({ code: classCode.toUpperCase() });
         if (!classroom) return res.status(404).json({ error: "Class not found" });
+        
         if (!classroom.students.includes(studentId)) {
             classroom.students.push(studentId);
             await classroom.save();
@@ -134,27 +157,45 @@ app.get('/class/:classId/students', async (req, res) => {
     try {
         const classroom = await Classroom.findById(req.params.classId);
         if (!classroom) return res.status(404).json({ error: "Class not found" });
-        const students = await User.find({ _id: { $in: classroom.students } }, 'name username');
+
+        const students = await User.find(
+            { _id: { $in: classroom.students } },
+            'name username' 
+        );
         res.json(students);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.post('/class/:classId/remove-student', async (req, res) => {
     const { studentId } = req.body;
     try {
         const classroom = await Classroom.findById(req.params.classId);
+        if (!classroom) return res.status(404).json({ error: "Class not found" });
+
         classroom.students = classroom.students.filter(id => id.toString() !== studentId);
         await classroom.save();
-        res.json({ message: "Student removed" });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+
+        res.json({ message: "Student removed successfully" });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
     try {
         const classroom = await Classroom.findById(req.params.classId);
         if (!classroom) return res.status(404).json({ error: "Class not found" });
+
+        // IMPORTANT: We store only the filename-relative path
         const relativePath = `uploads/${req.file.filename}`;
-        classroom.files.push({ filename: req.file.originalname, path: relativePath });
+        
+        classroom.files.push({ 
+            filename: req.file.originalname, 
+            path: relativePath 
+        });
+        
         await classroom.save();
         res.json({ message: "Success", file: relativePath });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -164,13 +205,18 @@ app.delete('/class/:classId/file/:fileId', async (req, res) => {
     try {
         const { classId, fileId } = req.params;
         const classroom = await Classroom.findById(classId);
+        if (!classroom) return res.status(404).json({ error: "Class not found" });
+
         const file = classroom.files.id(fileId);
         if (!file) return res.status(404).json({ error: "File not found" });
+
         const fullPath = path.join(__dirname, file.path);
         if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+
         file.deleteOne();
         await classroom.save();
-        res.json({ message: "Deleted" });
+        
+        res.json({ message: "File deleted successfully" });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -178,12 +224,14 @@ app.get('/reset', async (req, res) => {
     try {
         await User.deleteMany({});
         await Classroom.deleteMany({});
-        const files = fs.readdirSync(uploadDir);
-        for (const file of files) fs.unlinkSync(path.join(uploadDir, file));
-        res.send("Wiped!");
+        if (fs.existsSync(uploadDir)) {
+            const files = fs.readdirSync(uploadDir);
+            for (const file of files) fs.unlinkSync(path.join(uploadDir, file));
+        }
+        res.send("Database and Files Wiped!");
     } catch (err) { res.status(500).send(err.message); }
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🚀 SmartStroke Server running on port ${PORT}`);
 });
