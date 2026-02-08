@@ -35,7 +35,6 @@ if (!MONGO_URI) {
 
 // --- Schemas ---
 const UserSchema = new mongoose.Schema({
-    // FIXED: trim and lowercase are separate boolean options in Mongoose
     username: { type: String, required: true, unique: true, trim: true, lowercase: true },
     password: { type: String, required: true },
     name: { type: String, required: true },
@@ -148,6 +147,38 @@ app.get('/classes/:userId/:role', async (req, res) => {
             : await Classroom.find({ students: userId });
         res.json(classes);
     } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ✅ GET ALL ENROLLED STUDENTS FOR A CLASS
+app.get('/class/:classId/students', async (req, res) => {
+    try {
+        const classroom = await Classroom.findById(req.params.classId);
+        if (!classroom) return res.status(404).json({ error: "Class not found" });
+
+        const students = await User.find(
+            { _id: { $in: classroom.students } },
+            'name username' 
+        );
+        res.json(students);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ✅ REMOVE A STUDENT FROM A CLASS
+app.post('/class/:classId/remove-student', async (req, res) => {
+    const { studentId } = req.body;
+    try {
+        const classroom = await Classroom.findById(req.params.classId);
+        if (!classroom) return res.status(404).json({ error: "Class not found" });
+
+        classroom.students = classroom.students.filter(id => id.toString() !== studentId);
+        await classroom.save();
+
+        res.json({ message: "Student removed successfully" });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
