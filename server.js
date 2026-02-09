@@ -15,17 +15,18 @@ const TEACHER_SECRET_CODE = "TEACHER2024";
 app.use(cors());
 app.use(express.json());
 
-// Static File Serving
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Ensure upload directory exists and serve it statically
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
 }
+app.use('/uploads', express.static(uploadDir));
 
 // --- MongoDB Connection ---
 const MONGO_URI = process.env.MONGO_URI;
+
 if (!MONGO_URI) {
-    console.error("❌ MONGO_URI is missing!");
+    console.error("❌ MONGO_URI is missing! Check your .env file.");
 } else {
     mongoose.connect(MONGO_URI)
         .then(() => console.log("✅ MongoDB Connected Successfully"))
@@ -40,7 +41,8 @@ const UserSchema = new mongoose.Schema({
     firstName: { type: String, required: true },
     middleInitial: { type: String, default: "" },
     surname: { type: String, required: true },
-    role: { type: String, enum: ['teacher', 'student'], required: true }
+    role: { type: String, enum: ['teacher', 'student'], required: true },
+    profilePicture: { type: String, default: "" } // Added Profile Picture Field
 }, { toJSON: { virtuals: true }, toObject: { virtuals: true } });
 
 // Virtual for "name" to keep compatibility with existing frontend code
@@ -71,7 +73,10 @@ const storage = multer.diskStorage({
         cb(null, `${Date.now()}-${cleanName}`);
     }
 });
-const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
+const upload = multer({ 
+    storage: storage,
+    limits: { fileSize: 10 * 1024 * 1024 } 
+});
 
 // --- ROUTES ---
 
@@ -106,16 +111,39 @@ app.put('/user/:userId', async (req, res) => {
         res.json({ 
             success: true, 
             userId: user._id,
-            name: user.name, // Returns the virtual name
+            name: user.name,
             firstName: user.firstName,
             middleInitial: user.middleInitial,
             surname: user.surname,
             username: user.username,
             email: user.email,
-            role: user.role
+            role: user.role,
+            profilePicture: user.profilePicture
         });
     } catch (err) {
         res.status(500).json({ error: "Update failed: " + err.message });
+    }
+});
+
+// ✅ UPLOAD PROFILE PICTURE
+app.post('/user/:userId/avatar', upload.single('avatar'), async (req, res) => {
+    try {
+        const user = await User.findById(req.params.userId);
+        if (!user) return res.status(404).json({ error: "User not found" });
+
+        // Delete old profile picture if it exists
+        if (user.profilePicture) {
+            const oldPath = path.join(__dirname, user.profilePicture);
+            if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+        }
+
+        const relativePath = `uploads/${req.file.filename}`;
+        user.profilePicture = relativePath;
+        await user.save();
+
+        res.json({ success: true, profilePicture: relativePath });
+    } catch (err) {
+        res.status(500).json({ error: "Upload failed: " + err.message });
     }
 });
 
@@ -147,9 +175,8 @@ app.post('/register', async (req, res) => {
     }
 });
 
-// ✅ UPDATED LOGIN: Supports Username or Email
 app.post('/login', async (req, res) => {
-    const { username, password } = req.body; // 'username' here represents the identifier input
+    const { username, password } = req.body;
     try {
         const user = await User.findOne({ 
             $or: [
@@ -172,7 +199,8 @@ app.post('/login', async (req, res) => {
             surname: user.surname,
             username: user.username,
             email: user.email,
-            role: user.role 
+            role: user.role,
+            profilePicture: user.profilePicture
         });
     } catch (err) {
         res.status(500).json({ error: "Login failed" });
@@ -217,7 +245,7 @@ app.get('/classes/:userId/:role', async (req, res) => {
 app.get('/class/:classId/students', async (req, res) => {
     try {
         const classroom = await Classroom.findById(req.params.classId);
-        const students = await User.find({ _id: { $in: classroom.students } }, 'firstName surname username email');
+        const students = await User.find({ _id: { $in: classroom.students } }, 'firstName surname username email profilePicture');
         res.json(students);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
