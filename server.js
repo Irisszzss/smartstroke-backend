@@ -42,10 +42,13 @@ const UserSchema = new mongoose.Schema({
     middleInitial: { type: String, default: "" },
     surname: { type: String, required: true },
     role: { type: String, enum: ['teacher', 'student'], required: true },
-    profilePicture: { type: String, default: "" } // Added Profile Picture Field
-}, { toJSON: { virtuals: true }, toObject: { virtuals: true } });
+    profilePicture: { type: String, default: "" }
+}, { 
+    toJSON: { virtuals: true }, 
+    toObject: { virtuals: true },
+    timestamps: true // ✅ Added Timestamps for User
+});
 
-// Virtual for "name" to keep compatibility with existing frontend code
 UserSchema.virtual('name').get(function() {
     return `${this.firstName} ${this.middleInitial ? this.middleInitial + '. ' : ''}${this.surname}`;
 });
@@ -60,9 +63,12 @@ const ClassSchema = new mongoose.Schema({
     files: [{
         filename: String,
         path: String, 
-        uploadDate: { type: Date, default: Date.now }
+        uploadDate: { type: Date, default: Date.now } // Existing field
     }]
+}, { 
+    timestamps: true // ✅ Added Timestamps for Classroom
 });
+
 const Classroom = mongoose.model('Classroom', ClassSchema);
 
 // --- File Upload Configuration ---
@@ -80,7 +86,7 @@ const upload = multer({
 
 // --- ROUTES ---
 
-// ✅ UPDATE USER PROFILE
+// UPDATE USER PROFILE
 app.put('/user/:userId', async (req, res) => {
     const { firstName, middleInitial, surname, username, email, password } = req.body;
     try {
@@ -125,13 +131,12 @@ app.put('/user/:userId', async (req, res) => {
     }
 });
 
-// ✅ UPLOAD PROFILE PICTURE
+// UPLOAD PROFILE PICTURE
 app.post('/user/:userId/avatar', upload.single('avatar'), async (req, res) => {
     try {
         const user = await User.findById(req.params.userId);
         if (!user) return res.status(404).json({ error: "User not found" });
 
-        // Delete old profile picture if it exists
         if (user.profilePicture) {
             const oldPath = path.join(__dirname, user.profilePicture);
             if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
@@ -207,8 +212,6 @@ app.post('/login', async (req, res) => {
     }
 });
 
-
-
 app.post('/create-class', async (req, res) => {
     const { name, teacherId } = req.body;
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -264,9 +267,17 @@ app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
     try {
         const classroom = await Classroom.findById(req.params.classId);
         const relativePath = `uploads/${req.file.filename}`;
-        classroom.files.push({ filename: req.file.originalname, path: relativePath });
+        
+        // Push object with metadata; uploadDate will still be there for safety
+        classroom.files.push({ 
+            filename: req.file.originalname, 
+            path: relativePath,
+            uploadDate: new Date() 
+        });
+        
         await classroom.save();
-        res.json({ message: "Success", file: relativePath });
+        // Return the full updated classroom or the specific file
+        res.json({ message: "Success", file: classroom.files[classroom.files.length - 1] });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -275,6 +286,8 @@ app.delete('/class/:classId/file/:fileId', async (req, res) => {
         const { classId, fileId } = req.params;
         const classroom = await Classroom.findById(classId);
         const file = classroom.files.id(fileId);
+        if (!file) return res.status(404).json({ error: "File not found" });
+
         const fullPath = path.join(__dirname, file.path);
         if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
         file.deleteOne();
