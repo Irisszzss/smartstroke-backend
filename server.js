@@ -296,6 +296,31 @@ app.delete('/class/:classId/file/:fileId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// server.js - Add this route
+app.delete('/class/:classId', async (req, res) => {
+    try {
+        const { classId } = req.params;
+        const classroom = await Classroom.findById(classId);
+        
+        if (!classroom) return res.status(404).json({ error: "Class not found" });
+
+        // 1. Optional: Delete physical files from 'uploads' folder first
+        if (classroom.files && classroom.files.length > 0) {
+            classroom.files.forEach(file => {
+                const fullPath = path.join(__dirname, file.path);
+                if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+            });
+        }
+
+        // 2. Remove the class from database
+        await Classroom.findByIdAndDelete(classId);
+        
+        res.json({ message: "Classroom and associated files deleted successfully" });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/reset', async (req, res) => {
     try {
         await User.deleteMany({});
