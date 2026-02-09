@@ -321,6 +321,24 @@ app.delete('/class/:classId', async (req, res) => {
     }
 });
 
+app.post('/class/:classId/leave', async (req, res) => {
+    try {
+        const { classId } = req.params;
+        const { studentId } = req.body;
+
+        const classroom = await Classroom.findById(classId);
+        if (!classroom) return res.status(404).json({ error: "Class not found" });
+
+        // Remove the student ID from the array
+        classroom.students = classroom.students.filter(id => id.toString() !== studentId);
+        await classroom.save();
+
+        res.json({ success: true, message: "You have left the class." });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/reset', async (req, res) => {
     try {
         await User.deleteMany({});
