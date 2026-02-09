@@ -15,7 +15,6 @@ const TEACHER_SECRET_CODE = "TEACHER2024";
 app.use(cors());
 app.use(express.json());
 
-// Ensure upload directory exists and serve it statically
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
@@ -35,8 +34,9 @@ if (!MONGO_URI) {
 
 // --- Schemas ---
 const UserSchema = new mongoose.Schema({
-    username: { type: String, required: true, unique: true, trim: true, lowercase: true },
-    email: { type: String, required: true, unique: true, trim: true, lowercase: true },
+    // Removed lowercase: true to allow Case Sensitivity
+    username: { type: String, required: true, unique: true, trim: true },
+    email: { type: String, required: true, unique: true, trim: true },
     password: { type: String, required: true },
     firstName: { type: String, required: true },
     middleInitial: { type: String, default: "" },
@@ -46,7 +46,7 @@ const UserSchema = new mongoose.Schema({
 }, { 
     toJSON: { virtuals: true }, 
     toObject: { virtuals: true },
-    timestamps: true // ✅ Added Timestamps for User
+    timestamps: true 
 });
 
 UserSchema.virtual('name').get(function() {
@@ -63,10 +63,10 @@ const ClassSchema = new mongoose.Schema({
     files: [{
         filename: String,
         path: String, 
-        uploadDate: { type: Date, default: Date.now } // Existing field
+        uploadDate: { type: Date, default: Date.now }
     }]
 }, { 
-    timestamps: true // ✅ Added Timestamps for Classroom
+    timestamps: true 
 });
 
 const Classroom = mongoose.model('Classroom', ClassSchema);
@@ -93,16 +93,18 @@ app.put('/user/:userId', async (req, res) => {
         const user = await User.findById(req.params.userId);
         if (!user) return res.status(404).json({ error: "User not found" });
 
-        if (username && username.toLowerCase() !== user.username) {
-            const existing = await User.findOne({ username: username.toLowerCase() });
+        // Case Sensitive Check for Username update
+        if (username && username !== user.username) {
+            const existing = await User.findOne({ username: username });
             if (existing) return res.status(400).json({ error: "Username taken" });
-            user.username = username.toLowerCase();
+            user.username = username;
         }
 
-        if (email && email.toLowerCase() !== user.email) {
-            const existing = await User.findOne({ email: email.toLowerCase() });
+        // Case Sensitive Check for Email update
+        if (email && email !== user.email) {
+            const existing = await User.findOne({ email: email });
             if (existing) return res.status(400).json({ error: "Email taken" });
-            user.email = email.toLowerCase();
+            user.email = email;
         }
 
         if (firstName) user.firstName = firstName;
@@ -155,7 +157,8 @@ app.post('/user/:userId/avatar', upload.single('avatar'), async (req, res) => {
 app.post('/register', async (req, res) => {
     const { username, email, password, firstName, middleInitial, surname, role, secretCode } = req.body;
     try {
-        const existingUser = await User.findOne({ $or: [{ username: username.toLowerCase() }, { email: email.toLowerCase() }] });
+        // Search exactly as provided (Case-Sensitive)
+        const existingUser = await User.findOne({ $or: [{ username: username }, { email: email }] });
         if (existingUser) return res.status(400).json({ error: "Username or Email already exists" });
 
         if (role === 'teacher' && secretCode !== TEACHER_SECRET_CODE) {
@@ -164,8 +167,8 @@ app.post('/register', async (req, res) => {
 
         const hashedPassword = await bcrypt.hash(password, 10);
         const newUser = new User({ 
-            username: username.toLowerCase(), 
-            email: email.toLowerCase(), 
+            username, // Case preserved
+            email,    // Case preserved
             password: hashedPassword, 
             firstName, 
             middleInitial, 
@@ -183,10 +186,11 @@ app.post('/register', async (req, res) => {
 app.post('/login', async (req, res) => {
     const { username, password } = req.body;
     try {
+        // Match exactly as typed (Case-Sensitive)
         const user = await User.findOne({ 
             $or: [
-                { username: username.toLowerCase() }, 
-                { email: username.toLowerCase() }
+                { username: username }, 
+                { email: username }
             ] 
         });
 
@@ -267,16 +271,12 @@ app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
     try {
         const classroom = await Classroom.findById(req.params.classId);
         const relativePath = `uploads/${req.file.filename}`;
-        
-        // Push object with metadata; uploadDate will still be there for safety
         classroom.files.push({ 
             filename: req.file.originalname, 
             path: relativePath,
             uploadDate: new Date() 
         });
-        
         await classroom.save();
-        // Return the full updated classroom or the specific file
         res.json({ message: "Success", file: classroom.files[classroom.files.length - 1] });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -296,15 +296,12 @@ app.delete('/class/:classId/file/:fileId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// server.js - Add this route
 app.delete('/class/:classId', async (req, res) => {
     try {
         const { classId } = req.params;
         const classroom = await Classroom.findById(classId);
-        
         if (!classroom) return res.status(404).json({ error: "Class not found" });
 
-        // 1. Optional: Delete physical files from 'uploads' folder first
         if (classroom.files && classroom.files.length > 0) {
             classroom.files.forEach(file => {
                 const fullPath = path.join(__dirname, file.path);
@@ -312,9 +309,7 @@ app.delete('/class/:classId', async (req, res) => {
             });
         }
 
-        // 2. Remove the class from database
         await Classroom.findByIdAndDelete(classId);
-        
         res.json({ message: "Classroom and associated files deleted successfully" });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -325,14 +320,10 @@ app.post('/class/:classId/leave', async (req, res) => {
     try {
         const { classId } = req.params;
         const { studentId } = req.body;
-
         const classroom = await Classroom.findById(classId);
         if (!classroom) return res.status(404).json({ error: "Class not found" });
-
-        // Remove the student ID from the array
         classroom.students = classroom.students.filter(id => id.toString() !== studentId);
         await classroom.save();
-
         res.json({ success: true, message: "You have left the class." });
     } catch (err) {
         res.status(500).json({ error: err.message });
