@@ -316,6 +316,28 @@ app.delete('/class/:classId', async (req, res) => {
     }
 });
 
+// server.js
+app.delete('/user/:userId/avatar', async (req, res) => {
+    try {
+        const user = await User.findById(req.params.userId);
+        if (!user) return res.status(404).json({ error: "User not found" });
+
+        // Delete physical file if it exists
+        if (user.profilePicture) {
+            const filePath = path.join(__dirname, user.profilePicture);
+            if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        }
+
+        // Clear the path in DB
+        user.profilePicture = "";
+        await user.save();
+
+        res.json({ success: true, message: "Avatar removed" });
+    } catch (err) {
+        res.status(500).json({ error: "Failed to remove avatar: " + err.message });
+    }
+});
+
 app.post('/class/:classId/leave', async (req, res) => {
     try {
         const { classId } = req.params;
