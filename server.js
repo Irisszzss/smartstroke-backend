@@ -6,8 +6,18 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
+const http = require('http'); // Required for Socket.io
+const { Server } = require('socket.io'); // Required for Socket.io
 
 const app = express();
+const server = http.createServer(app); // Wrap express app
+const io = new Server(server, {
+    cors: {
+        origin: "*", // Allows connection from your frontend
+        methods: ["GET", "POST"]
+    }
+});
+
 const PORT = process.env.PORT || 3000;
 const TEACHER_SECRET_CODE = "TEACHER2024";
 
@@ -34,7 +44,6 @@ if (!MONGO_URI) {
 
 // --- Schemas ---
 const UserSchema = new mongoose.Schema({
-    // Removed lowercase: true to allow Case Sensitivity
     username: { type: String, required: true, unique: true, trim: true },
     email: { type: String, required: true, unique: true, trim: true },
     password: { type: String, required: true },
@@ -84,23 +93,47 @@ const upload = multer({
     limits: { fileSize: 10 * 1024 * 1024 } 
 });
 
+// --- SOCKET.IO REAL-TIME STREAMING ---
+io.on('connection', (socket) => {
+    console.log('⚡ User connected:', socket.id);
+
+    // Join a specific class room for targeted broadcasting
+    socket.on('join-session', (classId) => {
+        socket.join(classId);
+        console.log(`👤 User joined classroom: ${classId}`);
+    });
+
+    // Receive stroke data from teacher and broadcast to students in the same class
+    socket.on('transmit-stroke', (data) => {
+        // data: { classId, x, y, color, isDown, pageIndex }
+        socket.to(data.classId).emit('receive-stroke', data);
+    });
+
+    // Handle session actions like clearing page or creating new pages
+    socket.on('transmit-action', (data) => {
+        // data: { classId, action: 'clear' | 'newPage', pageIndex }
+        socket.to(data.classId).emit('receive-action', data);
+    });
+
+    socket.on('disconnect', () => {
+        console.log('❌ User disconnected');
+    });
+});
+
 // --- ROUTES ---
 
-// UPDATE USER PROFILE
 app.put('/user/:userId', async (req, res) => {
     const { firstName, middleInitial, surname, username, email, password } = req.body;
     try {
         const user = await User.findById(req.params.userId);
         if (!user) return res.status(404).json({ error: "User not found" });
 
-        // Case Sensitive Check for Username update
         if (username && username !== user.username) {
             const existing = await User.findOne({ username: username });
             if (existing) return res.status(400).json({ error: "Username taken" });
             user.username = username;
         }
 
-        // Case Sensitive Check for Email update
         if (email && email !== user.email) {
             const existing = await User.findOne({ email: email });
             if (existing) return res.status(400).json({ error: "Email taken" });
@@ -133,7 +166,6 @@ app.put('/user/:userId', async (req, res) => {
     }
 });
 
-// UPLOAD PROFILE PICTURE
 app.post('/user/:userId/avatar', upload.single('avatar'), async (req, res) => {
     try {
         const user = await User.findById(req.params.userId);
@@ -157,7 +189,6 @@ app.post('/user/:userId/avatar', upload.single('avatar'), async (req, res) => {
 app.post('/register', async (req, res) => {
     const { username, email, password, firstName, middleInitial, surname, role, secretCode } = req.body;
     try {
-        // Search exactly as provided (Case-Sensitive)
         const existingUser = await User.findOne({ $or: [{ username: username }, { email: email }] });
         if (existingUser) return res.status(400).json({ error: "Username or Email already exists" });
 
@@ -167,8 +198,8 @@ app.post('/register', async (req, res) => {
 
         const hashedPassword = await bcrypt.hash(password, 10);
         const newUser = new User({ 
-            username, // Case preserved
-            email,    // Case preserved
+            username, 
+            email,    
             password: hashedPassword, 
             firstName, 
             middleInitial, 
@@ -186,7 +217,6 @@ app.post('/register', async (req, res) => {
 app.post('/login', async (req, res) => {
     const { username, password } = req.body;
     try {
-        // Match exactly as typed (Case-Sensitive)
         const user = await User.findOne({ 
             $or: [
                 { username: username }, 
@@ -316,19 +346,16 @@ app.delete('/class/:classId', async (req, res) => {
     }
 });
 
-// server.js
 app.delete('/user/:userId/avatar', async (req, res) => {
     try {
         const user = await User.findById(req.params.userId);
         if (!user) return res.status(404).json({ error: "User not found" });
 
-        // Delete physical file if it exists
         if (user.profilePicture) {
             const filePath = path.join(__dirname, user.profilePicture);
             if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
         }
 
-        // Clear the path in DB
         user.profilePicture = "";
         await user.save();
 
@@ -362,6 +389,7 @@ app.get('/reset', async (req, res) => {
     } catch (err) { res.status(500).send(err.message); }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 SmartStroke Server running on port ${PORT}`);
+// START SERVER
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 SmartStroke Server with Streaming running on port ${PORT}`);
 });
