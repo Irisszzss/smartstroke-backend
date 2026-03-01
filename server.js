@@ -93,6 +93,40 @@ const upload = multer({
     limits: { fileSize: 10 * 1024 * 1024 } 
 });
 
+// Add this near your other state variables in server.js
+const activeStreams = {}; // { classId: teacherSocketId }
+
+io.on('connection', (socket) => {
+    // ... existing join-session logic ...
+
+    socket.on('start-stream', (classId) => {
+        activeStreams[classId] = socket.id;
+        io.to(classId).emit('stream-status', { isLive: true });
+    });
+
+    socket.on('stop-stream', (classId) => {
+        if (activeStreams[classId] === socket.id) {
+            delete activeStreams[classId];
+            io.to(classId).emit('stream-status', { isLive: false });
+        }
+    });
+
+    socket.on('check-stream-status', (classId) => {
+        const isLive = !!activeStreams[classId];
+        socket.emit('stream-status', { isLive });
+    });
+
+    socket.on('disconnect', () => {
+        // Remove stream if teacher disconnects
+        for (const classId in activeStreams) {
+            if (activeStreams[classId] === socket.id) {
+                delete activeStreams[classId];
+                io.to(classId).emit('stream-status', { isLive: false });
+            }
+        }
+    });
+});
+
 // --- SOCKET.IO REAL-TIME STREAMING ---
 io.on('connection', (socket) => {
     console.log('⚡ User connected:', socket.id);
