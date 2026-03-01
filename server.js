@@ -238,7 +238,7 @@ app.post('/register', async (req, res) => {
             firstName, 
             middleInitial, 
             surname, 
-            role 
+            role: role.toLowerCase()
         });
         await newUser.save();
 
