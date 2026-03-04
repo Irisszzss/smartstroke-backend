@@ -189,17 +189,22 @@ app.post('/login', async (req, res) => {
 
         if (user.role === 'teacher' && user.isApproved !== true) {
             return res.status(403).json({ 
-                error: "Your account is pending admin approval. Please wait for an email confirmation." 
+                error: "Your account is pending admin approval." 
             });
         }
 
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) return res.status(400).json({ error: "Invalid credentials" });
 
+        // --- THE FIX: Send explicit name fields ---
         res.json({ 
             success: true, 
             userId: user._id, 
-            name: user.name,
+            username: user.username, // Added
+            firstName: user.firstName, // Added
+            surname: user.surname,     // Added
+            middleInitial: user.middleInitial, // Added
+            name: user.name,           // Keep for compatibility
             role: user.role,
             email: user.email,
             isApproved: user.isApproved,
