@@ -97,8 +97,15 @@ const upload = multer({
 const activeStreams = {}; // { classId: teacherSocketId }
 
 io.on('connection', (socket) => {
-    // ... existing join-session logic ...
+    console.log('⚡ User connected:', socket.id);
 
+    // 1. JOIN SESSION
+    socket.on('join-session', (classId) => {
+        socket.join(classId);
+        console.log(`👤 User joined classroom: ${classId}`);
+    });
+
+    // 2. STREAM MANAGEMENT
     socket.on('start-stream', (classId) => {
         activeStreams[classId] = socket.id;
         io.to(classId).emit('stream-status', { isLive: true });
@@ -111,68 +118,48 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('check-stream-status', (classId) => {
-        const isLive = !!activeStreams[classId];
-        socket.emit('stream-status', { isLive });
+    // 3. COMPUTER VISION (ABSOLUTE POSITION)
+    socket.on('transmit-cv-pos', (data) => {
+        // Broadcasts absolute X/Y to the teacher's dashboard in that specific room
+        socket.to(data.classId).emit('receive-cv-pos', { x: data.x, y: data.y });
     });
 
+    // 4. CAMERA AUTO-SYNC
+    socket.on('request-camera-sync', (classId) => {
+        console.log(`📡 Broadcast: Camera sync requested for class ${classId}`);
+        // We broadcast to EVERYONE because the Python script hasn't joined a room yet
+        io.emit('camera-auto-join', classId); 
+    });
+
+    // Add this to your existing connection block
+    socket.on('start-stream', (classId) => {
+        activeStreams[classId] = socket.id;
+        // Notify anyone (like Python) that a board is now "open"
+        io.emit('board-available', classId); 
+    });
+
+    socket.on('python-ping', () => {
+        socket.emit('python-ready');
+    });
+
+    // 5. STROKE & ACTION BROADCASTING
+    socket.on('transmit-stroke', (data) => {
+        socket.to(data.classId).emit('receive-stroke', data);
+    });
+
+    socket.on('transmit-action', (data) => {
+        socket.to(data.classId).emit('receive-action', data);
+    });
+
+    // 6. DISCONNECT CLEANUP
     socket.on('disconnect', () => {
-        // Remove stream if teacher disconnects
+        console.log('❌ User disconnected');
         for (const classId in activeStreams) {
             if (activeStreams[classId] === socket.id) {
                 delete activeStreams[classId];
                 io.to(classId).emit('stream-status', { isLive: false });
             }
         }
-    });
-
-    //
-    socket.on('transmit-cv-pos', (data) => {
-        // data should be: { classId, x, y }
-        // We broadcast this to the class room so the teacher's React app catches it
-        socket.to(data.classId).emit('receive-cv-pos', {
-            x: data.x,
-            y: data.y
-        });
-    });
-
-        // --- CAMERA AUTO-SYNC BRIDGE ---
-    socket.on('request-camera-sync', (classId) => {
-        // When teacher clicks sync, broadcast the ID to the Python script
-        console.log(`📡 Broadcast: Camera sync requested for class ${classId}`);
-        io.emit('camera-auto-join', classId); 
-    });
-
-    // For Python script to "ask" for the ID if it starts after the teacher is already logged in
-    socket.on('python-ping', () => {
-        socket.emit('python-ready');
-    });
-});
-
-// --- SOCKET.IO REAL-TIME STREAMING ---
-io.on('connection', (socket) => {
-    console.log('⚡ User connected:', socket.id);
-
-    // Join a specific class room for targeted broadcasting
-    socket.on('join-session', (classId) => {
-        socket.join(classId);
-        console.log(`👤 User joined classroom: ${classId}`);
-    });
-
-    // Receive stroke data from teacher and broadcast to students in the same class
-    socket.on('transmit-stroke', (data) => {
-        // data: { classId, x, y, color, isDown, pageIndex }
-        socket.to(data.classId).emit('receive-stroke', data);
-    });
-
-    // Handle session actions like clearing page or creating new pages
-    socket.on('transmit-action', (data) => {
-        // data: { classId, action: 'clear' | 'newPage', pageIndex }
-        socket.to(data.classId).emit('receive-action', data);
-    });
-
-    socket.on('disconnect', () => {
-        console.log('❌ User disconnected');
     });
 });
 
