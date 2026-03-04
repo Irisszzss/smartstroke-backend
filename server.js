@@ -335,6 +335,23 @@ app.get('/classes/:userId/:role', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// --- Get Students in a Class ---
+app.get('/class/:classId/students', async (req, res) => {
+    try {
+        const classroom = await Classroom.findById(req.params.classId)
+            .populate('students', 'firstName surname username profilePicture'); // Only get necessary fields
+        
+        if (!classroom) {
+            return res.status(404).json({ error: "Classroom not found" });
+        }
+
+        res.json(classroom.students);
+    } catch (err) {
+        console.error("Error fetching students:", err);
+        res.status(500).json({ error: "Server error fetching students" });
+    }
+});
+
 app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
     try {
         const classroom = await Classroom.findById(req.params.classId);
