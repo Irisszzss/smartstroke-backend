@@ -31,7 +31,11 @@ const transporter = nodemailer.createTransport({
 });
 
 // --- Middleware Configuration ---
-app.use(cors());
+app.use(cors({
+    origin: "*", // During testing, this allows all. For production, replace with your Vercel/Netlify URL
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+}));
 app.use(express.json());
 
 // Initialize file upload directory
