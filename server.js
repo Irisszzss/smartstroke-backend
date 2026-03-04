@@ -304,6 +304,27 @@ app.get('/reset', async (req, res) => {
     } catch (err) { res.status(500).send(err.message); }
 });
 
+// 1. Fetch all teachers waiting for approval
+app.get('/admin/pending-teachers', async (req, res) => {
+    try {
+        const pending = await User.find({ role: 'teacher', isApproved: false }, 'firstName surname email username');
+        res.json(pending);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 2. Decline/Delete a registration request
+app.delete('/admin/decline-teacher/:email', async (req, res) => {
+    try {
+        const user = await User.findOneAndDelete({ email: req.params.email, isApproved: false });
+        if (!user) return res.status(404).json({ error: "Request not found" });
+        res.json({ success: true, message: `Registration for ${req.params.email} declined and removed.` });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // --- Server Entry Point ---
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 SmartStroke Server running on port ${PORT}`);
