@@ -135,6 +135,18 @@ io.on('connection', (socket) => {
             y: data.y
         });
     });
+
+        // --- CAMERA AUTO-SYNC BRIDGE ---
+    socket.on('request-camera-sync', (classId) => {
+        // When teacher clicks sync, broadcast the ID to the Python script
+        console.log(`📡 Broadcast: Camera sync requested for class ${classId}`);
+        io.emit('camera-auto-join', classId); 
+    });
+
+    // For Python script to "ask" for the ID if it starts after the teacher is already logged in
+    socket.on('python-ping', () => {
+        socket.emit('python-ready');
+    });
 });
 
 // --- SOCKET.IO REAL-TIME STREAMING ---
