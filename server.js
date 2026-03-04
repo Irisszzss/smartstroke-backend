@@ -211,12 +211,14 @@ app.post('/login', async (req, res) => {
 });
 
 // 2. User Profile Management
+// --- Update this specific route in your backend code ---
 app.put('/user/:userId', async (req, res) => {
     const { firstName, middleInitial, surname, username, email, password } = req.body;
     try {
         const user = await User.findById(req.params.userId);
         if (!user) return res.status(404).json({ error: "User not found" });
 
+        // Update fields if provided
         if (username && username !== user.username) {
             const existing = await User.findOne({ username });
             if (existing) return res.status(400).json({ error: "Username taken" });
@@ -227,14 +229,34 @@ app.put('/user/:userId', async (req, res) => {
             if (existing) return res.status(400).json({ error: "Email taken" });
             user.email = email;
         }
+        
         if (firstName) user.firstName = firstName;
         if (middleInitial !== undefined) user.middleInitial = middleInitial;
         if (surname) user.surname = surname;
-        if (password && password.trim() !== "") user.password = await bcrypt.hash(password, 10);
+        
+        if (password && password.trim() !== "") {
+            user.password = await bcrypt.hash(password, 10);
+        }
 
         await user.save();
-        res.json({ success: true, userId: user._id, name: user.name, email: user.email });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+
+        // FIX: Return the full object so the frontend state stays complete
+        res.json({ 
+            success: true, 
+            userId: user._id, 
+            username: user.username,    // Added
+            firstName: user.firstName,  // Added
+            surname: user.surname,      // Added
+            middleInitial: user.middleInitial, // Added
+            name: user.name, 
+            email: user.email,
+            role: user.role,            // Added
+            profilePicture: user.profilePicture, // Added
+            isApproved: user.isApproved // Added
+        });
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
 });
 
 // 3. Classroom Management
