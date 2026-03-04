@@ -6,14 +6,14 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
-const http = require('http'); // Required for Socket.io
-const { Server } = require('socket.io'); // Required for Socket.io
+const http = require('http'); // HTTP server for Socket.io integration
+const { Server } = require('socket.io'); // Socket.io server class
 
 const app = express();
-const server = http.createServer(app); // Wrap express app
+const server = http.createServer(app); // Create HTTP server using Express app
 const io = new Server(server, {
     cors: {
-        origin: "*", // Allows connection from your frontend
+        origin: "*", // Allows cross-origin requests from any frontend origin
         methods: ["GET", "POST"]
     }
 });
@@ -21,17 +21,18 @@ const io = new Server(server, {
 const PORT = process.env.PORT || 3000;
 const TEACHER_SECRET_CODE = "TEACHER2024";
 
-// --- Middleware ---
+// --- Middleware Configuration ---
 app.use(cors());
 app.use(express.json());
 
+// Initialize file upload directory
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
 }
 app.use('/uploads', express.static(uploadDir));
 
-// --- MongoDB Connection ---
+// --- MongoDB Database Connection ---
 const MONGO_URI = process.env.MONGO_URI;
 
 if (!MONGO_URI) {
@@ -42,7 +43,7 @@ if (!MONGO_URI) {
         .catch(err => console.error("❌ MongoDB Connection Error:", err));
 }
 
-// --- Schemas ---
+// --- Data Schemas & Models ---
 const UserSchema = new mongoose.Schema({
     username: { type: String, required: true, unique: true, trim: true },
     email: { type: String, required: true, unique: true, trim: true },
@@ -58,6 +59,7 @@ const UserSchema = new mongoose.Schema({
     timestamps: true 
 });
 
+// Virtual property for formatted full name
 UserSchema.virtual('name').get(function() {
     return `${this.firstName} ${this.middleInitial ? this.middleInitial + '. ' : ''}${this.surname}`;
 });
@@ -80,35 +82,39 @@ const ClassSchema = new mongoose.Schema({
 
 const Classroom = mongoose.model('Classroom', ClassSchema);
 
-// --- File Upload Configuration ---
+// --- Multer File Storage Logic ---
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadDir),
     filename: (req, file, cb) => {
-        const cleanName = file.originalname.replace(/\s+/g, '_');
+        const cleanName = file.originalname.replace(/\s+/g, '_'); // Replace spaces with underscores
         cb(null, `${Date.now()}-${cleanName}`);
     }
 });
+
 const upload = multer({ 
     storage: storage,
-    limits: { fileSize: 10 * 1024 * 1024 } 
+    limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
 
-// Add this near your other state variables in server.js
-const activeStreams = {}; // { classId: teacherSocketId }
+// In-memory store for tracking live sessions
+const activeStreams = {}; // Structure: { classId: teacherSocketId }
 
+// --- Socket.io Real-time Event Handlers ---
 io.on('connection', (socket) => {
     console.log('⚡ User connected:', socket.id);
 
-    // 1. JOIN SESSION
+    // 1. Join a specific classroom room
     socket.on('join-session', (classId) => {
         socket.join(classId);
         console.log(`👤 User joined classroom: ${classId}`);
     });
 
-    // 2. STREAM MANAGEMENT
+    // 2. Livestream State Management
     socket.on('start-stream', (classId) => {
         activeStreams[classId] = socket.id;
         io.to(classId).emit('stream-status', { isLive: true });
+        // Notify external clients (e.g., Python CV script) that the board is available
+        io.emit('board-available', classId); 
     });
 
     socket.on('stop-stream', (classId) => {
@@ -118,31 +124,24 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 3. COMPUTER VISION (ABSOLUTE POSITION)
+    // 3. Computer Vision (Absolute Position) Data
     socket.on('transmit-cv-pos', (data) => {
-        // Broadcasts absolute X/Y to the teacher's dashboard in that specific room
+        // Broadcasts absolute X/Y coordinates to students in the classroom
         socket.to(data.classId).emit('receive-cv-pos', { x: data.x, y: data.y });
     });
 
-    // 4. CAMERA AUTO-SYNC
+    // 4. Automation & Syncing
     socket.on('request-camera-sync', (classId) => {
         console.log(`📡 Broadcast: Camera sync requested for class ${classId}`);
-        // We broadcast to EVERYONE because the Python script hasn't joined a room yet
+        // Global broadcast as the receiver script might not be in a room yet
         io.emit('camera-auto-join', classId); 
-    });
-
-    // Add this to your existing connection block
-    socket.on('start-stream', (classId) => {
-        activeStreams[classId] = socket.id;
-        // Notify anyone (like Python) that a board is now "open"
-        io.emit('board-available', classId); 
     });
 
     socket.on('python-ping', () => {
         socket.emit('python-ready');
     });
 
-    // 5. STROKE & ACTION BROADCASTING
+    // 5. Drawing Stroke & Canvas Action Broadcasting
     socket.on('transmit-stroke', (data) => {
         socket.to(data.classId).emit('receive-stroke', data);
     });
@@ -151,7 +150,7 @@ io.on('connection', (socket) => {
         socket.to(data.classId).emit('receive-action', data);
     });
 
-    // 6. DISCONNECT CLEANUP
+    // 6. Cleanup on User Disconnection
     socket.on('disconnect', () => {
         console.log('❌ User disconnected');
         for (const classId in activeStreams) {
@@ -163,8 +162,9 @@ io.on('connection', (socket) => {
     });
 });
 
-// --- ROUTES ---
+// --- REST API Endpoints ---
 
+// Update User Profile
 app.put('/user/:userId', async (req, res) => {
     const { firstName, middleInitial, surname, username, email, password } = req.body;
     try {
@@ -209,6 +209,7 @@ app.put('/user/:userId', async (req, res) => {
     }
 });
 
+// Upload User Avatar
 app.post('/user/:userId/avatar', upload.single('avatar'), async (req, res) => {
     try {
         const user = await User.findById(req.params.userId);
@@ -229,6 +230,7 @@ app.post('/user/:userId/avatar', upload.single('avatar'), async (req, res) => {
     }
 });
 
+// User Registration
 app.post('/register', async (req, res) => {
     const { username, email, password, firstName, middleInitial, surname, role, secretCode } = req.body;
     try {
@@ -257,6 +259,7 @@ app.post('/register', async (req, res) => {
     }
 });
 
+// User Login
 app.post('/login', async (req, res) => {
     const { username, password } = req.body;
     try {
@@ -289,6 +292,7 @@ app.post('/login', async (req, res) => {
     }
 });
 
+// Create a New Classroom
 app.post('/create-class', async (req, res) => {
     const { name, teacherId } = req.body;
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -299,6 +303,7 @@ app.post('/create-class', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Join Classroom with Code
 app.post('/join-class', async (req, res) => {
     const { studentId, classCode } = req.body;
     try {
@@ -312,6 +317,7 @@ app.post('/join-class', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Fetch Classes based on User Role
 app.get('/classes/:userId/:role', async (req, res) => {
     const { userId, role } = req.params;
     try {
@@ -322,6 +328,7 @@ app.get('/classes/:userId/:role', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Get Student List for a Class
 app.get('/class/:classId/students', async (req, res) => {
     try {
         const classroom = await Classroom.findById(req.params.classId);
@@ -330,6 +337,7 @@ app.get('/class/:classId/students', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Remove Student from Class
 app.post('/class/:classId/remove-student', async (req, res) => {
     const { studentId } = req.body;
     try {
@@ -340,6 +348,7 @@ app.post('/class/:classId/remove-student', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Upload PDF to Classroom
 app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
     try {
         const classroom = await Classroom.findById(req.params.classId);
@@ -354,6 +363,7 @@ app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Delete specific file from a Classroom
 app.delete('/class/:classId/file/:fileId', async (req, res) => {
     try {
         const { classId, fileId } = req.params;
@@ -369,6 +379,7 @@ app.delete('/class/:classId/file/:fileId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Delete Classroom and all its files
 app.delete('/class/:classId', async (req, res) => {
     try {
         const { classId } = req.params;
@@ -389,6 +400,7 @@ app.delete('/class/:classId', async (req, res) => {
     }
 });
 
+// Remove User Avatar
 app.delete('/user/:userId/avatar', async (req, res) => {
     try {
         const user = await User.findById(req.params.userId);
@@ -408,6 +420,7 @@ app.delete('/user/:userId/avatar', async (req, res) => {
     }
 });
 
+// Student Leave Class
 app.post('/class/:classId/leave', async (req, res) => {
     try {
         const { classId } = req.params;
@@ -422,6 +435,7 @@ app.post('/class/:classId/leave', async (req, res) => {
     }
 });
 
+// System Reset (Admin use only - wipes everything)
 app.get('/reset', async (req, res) => {
     try {
         await User.deleteMany({});
@@ -432,7 +446,7 @@ app.get('/reset', async (req, res) => {
     } catch (err) { res.status(500).send(err.message); }
 });
 
-// START SERVER
+// --- Server Entry Point ---
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 SmartStroke Server with Streaming running on port ${PORT}`);
 });
