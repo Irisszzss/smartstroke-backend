@@ -125,6 +125,16 @@ io.on('connection', (socket) => {
             }
         }
     });
+
+    //
+    socket.on('transmit-cv-pos', (data) => {
+        // data should be: { classId, x, y }
+        // We broadcast this to the class room so the teacher's React app catches it
+        socket.to(data.classId).emit('receive-cv-pos', {
+            x: data.x,
+            y: data.y
+        });
+    });
 });
 
 // --- SOCKET.IO REAL-TIME STREAMING ---
