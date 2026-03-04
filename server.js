@@ -32,7 +32,7 @@ const transporter = nodemailer.createTransport({
 
 // --- Middleware Configuration ---
 app.use(cors({
-    origin: "*", // During testing, this allows all. For production, replace with your Vercel/Netlify URL
+    origin: "*", 
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"]
 }));
@@ -65,7 +65,7 @@ const UserSchema = new mongoose.Schema({
     surname: { type: String, required: true },
     role: { type: String, enum: ['teacher', 'student'], required: true },
     profilePicture: { type: String, default: "" },
-    isApproved: { type: Boolean, default: false } // Default to false for teachers
+    isApproved: { type: Boolean, default: false }
 }, { 
     toJSON: { virtuals: true }, 
     toObject: { virtuals: true },
@@ -137,7 +137,7 @@ io.on('connection', (socket) => {
 
 // --- REST API Endpoints ---
 
-// 1. User Registration (Updated with Email & Approval Logic)
+// 1. Authentication
 app.post('/register', async (req, res) => {
     const { username, email, password, firstName, middleInitial, surname, role } = req.body;
     try {
@@ -151,7 +151,7 @@ app.post('/register', async (req, res) => {
             username, email, password: hashedPassword, 
             firstName, middleInitial, surname, 
             role: role.toLowerCase(),
-            isApproved: !isTeacher // Students approved by default, teachers are NOT
+            isApproved: !isTeacher 
         });
 
         await newUser.save();
@@ -178,34 +178,24 @@ app.post('/register', async (req, res) => {
     }
 });
 
-// 2. User Login (Updated to check approval)
-// Updated Login with strict Approval Check
 app.post('/login', async (req, res) => {
     const { username, password } = req.body;
     try {
-        // Find user by username or email
         const user = await User.findOne({ 
-            $or: [
-                { username: username }, 
-                { email: username }
-            ] 
+            $or: [{ username: username }, { email: username }] 
         });
 
         if (!user) return res.status(400).json({ error: "Account not found" });
 
-        // 1. STRICT CHECK: Block unapproved teachers
-        // This ensures that even if the password is correct, they cannot enter
         if (user.role === 'teacher' && user.isApproved !== true) {
             return res.status(403).json({ 
                 error: "Your account is pending admin approval. Please wait for an email confirmation." 
             });
         }
 
-        // 2. PASSWORD CHECK
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) return res.status(400).json({ error: "Invalid credentials" });
 
-        // 3. SUCCESSFUL LOGIN
         res.json({ 
             success: true, 
             userId: user._id, 
@@ -220,33 +210,7 @@ app.post('/login', async (req, res) => {
     }
 });
 
-// 3. ADMIN ONLY: Approve a teacher by email
-app.post('/admin/approve-teacher', async (req, res) => {
-    const { email } = req.body;
-    try {
-        const user = await User.findOneAndUpdate(
-            { email: email, role: 'teacher' }, 
-            { isApproved: true }, 
-            { new: true }
-        );
-        if (!user) return res.status(404).json({ error: "Teacher not found" });
-
-        const mailOptions = {
-            from: process.env.EMAIL_USER,
-            to: user.email,
-            subject: '✅ SmartStroke Account Approved',
-            text: `Hi ${user.firstName}, your account has been approved. You can now log in!`
-        };
-        transporter.sendMail(mailOptions).catch(err => console.error(err));
-
-        res.json({ success: true, message: `Teacher ${email} has been approved.` });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// --- User Profile & Classroom Management (Standard Logic) ---
-
+// 2. User Profile Management
 app.put('/user/:userId', async (req, res) => {
     const { firstName, middleInitial, surname, username, email, password } = req.body;
     try {
@@ -273,6 +237,7 @@ app.put('/user/:userId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// 3. Classroom Management
 app.post('/create-class', async (req, res) => {
     const { name, teacherId } = req.body;
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -296,35 +261,6 @@ app.post('/join-class', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- Leave Class Endpoint ---
-app.post('/class/:classId/leave', async (req, res) => {
-    const { userId } = req.body;
-    const { classId } = req.params;
-
-    try {
-        const classroom = await Classroom.findById(classId);
-        
-        if (!classroom) {
-            return res.status(404).json({ error: "Classroom not found" });
-        }
-
-        // Filter out the studentId from the array
-        classroom.students = classroom.students.filter(
-            (id) => id.toString() !== userId
-        );
-
-        await classroom.save();
-        
-        res.json({ 
-            success: true, 
-            message: "Successfully left the class" 
-        });
-    } catch (err) {
-        console.error("Leave class error:", err);
-        res.status(500).json({ error: "Internal server error while leaving class" });
-    }
-});
-
 app.get('/classes/:userId/:role', async (req, res) => {
     const { userId, role } = req.params;
     try {
@@ -335,23 +271,46 @@ app.get('/classes/:userId/:role', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- Get Students in a Class ---
-app.get('/class/:classId/students', async (req, res) => {
+app.post('/class/:classId/leave', async (req, res) => {
+    const { userId } = req.body;
     try {
-        const classroom = await Classroom.findById(req.params.classId)
-            .populate('students', 'firstName surname username profilePicture'); // Only get necessary fields
-        
-        if (!classroom) {
-            return res.status(404).json({ error: "Classroom not found" });
-        }
-
-        res.json(classroom.students);
-    } catch (err) {
-        console.error("Error fetching students:", err);
-        res.status(500).json({ error: "Server error fetching students" });
-    }
+        const classroom = await Classroom.findById(req.params.classId);
+        if (!classroom) return res.status(404).json({ error: "Classroom not found" });
+        classroom.students = classroom.students.filter(id => id.toString() !== userId);
+        await classroom.save();
+        res.json({ success: true, message: "Successfully left the class" });
+    } catch (err) { res.status(500).json({ error: "Internal server error" }); }
 });
 
+app.delete('/class/:classId', async (req, res) => {
+    try {
+        const result = await Classroom.findByIdAndDelete(req.params.classId);
+        if (!result) return res.status(404).json({ error: "Classroom not found" });
+        res.json({ success: true, message: "Classroom deleted" });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 4. Roster Management
+app.get('/class/:classId/students', async (req, res) => {
+    try {
+        const classroom = await Classroom.findById(req.params.classId).populate('students', 'firstName surname username profilePicture');
+        if (!classroom) return res.status(404).json({ error: "Classroom not found" });
+        res.json(classroom.students);
+    } catch (err) { res.status(500).json({ error: "Server error fetching students" }); }
+});
+
+app.post('/class/:classId/remove-student', async (req, res) => {
+    const { userId } = req.body;
+    try {
+        const classroom = await Classroom.findById(req.params.classId);
+        if (!classroom) return res.status(404).json({ error: "Classroom not found" });
+        classroom.students = classroom.students.filter(id => id.toString() !== userId);
+        await classroom.save();
+        res.json({ success: true, message: "Student removed" });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 5. File Management
 app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
     try {
         const classroom = await Classroom.findById(req.params.classId);
@@ -362,6 +321,54 @@ app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+app.delete('/class/:classId/file/:fileId', async (req, res) => {
+    try {
+        const classroom = await Classroom.findById(req.params.classId);
+        if (!classroom) return res.status(404).json({ error: "Classroom not found" });
+        const file = classroom.files.id(req.params.fileId);
+        if (file) {
+            const filePath = path.join(__dirname, file.path);
+            if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+            classroom.files.pull(req.params.fileId);
+            await classroom.save();
+        }
+        res.json({ success: true, message: "File deleted" });
+    } catch (err) { res.status(500).json({ error: "Error deleting file" }); }
+});
+
+// 6. Admin Management
+app.get('/admin/pending-teachers', async (req, res) => {
+    try {
+        const pending = await User.find({ role: 'teacher', isApproved: false }, 'firstName surname email username');
+        res.json(pending);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/approve-teacher', async (req, res) => {
+    const { email } = req.body;
+    try {
+        const user = await User.findOneAndUpdate({ email, role: 'teacher' }, { isApproved: true }, { new: true });
+        if (!user) return res.status(404).json({ error: "Teacher not found" });
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: user.email,
+            subject: '✅ SmartStroke Account Approved',
+            text: `Hi ${user.firstName}, your account has been approved. You can now log in!`
+        };
+        transporter.sendMail(mailOptions).catch(err => console.error(err));
+        res.json({ success: true, message: `Teacher ${email} has been approved.` });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/admin/decline-teacher/:email', async (req, res) => {
+    try {
+        const user = await User.findOneAndDelete({ email: req.params.email, isApproved: false });
+        if (!user) return res.status(404).json({ error: "Request not found" });
+        res.json({ success: true, message: `Registration for ${req.params.email} declined.` });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 7. System Utilities
 app.get('/reset', async (req, res) => {
     try {
         await User.deleteMany({});
@@ -372,26 +379,7 @@ app.get('/reset', async (req, res) => {
     } catch (err) { res.status(500).send(err.message); }
 });
 
-// 1. Fetch all teachers waiting for approval
-app.get('/admin/pending-teachers', async (req, res) => {
-    try {
-        const pending = await User.find({ role: 'teacher', isApproved: false }, 'firstName surname email username');
-        res.json(pending);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
 
-// 2. Decline/Delete a registration request
-app.delete('/admin/decline-teacher/:email', async (req, res) => {
-    try {
-        const user = await User.findOneAndDelete({ email: req.params.email, isApproved: false });
-        if (!user) return res.status(404).json({ error: "Request not found" });
-        res.json({ success: true, message: `Registration for ${req.params.email} declined and removed.` });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
 
 // --- Server Entry Point ---
 server.listen(PORT, '0.0.0.0', () => {
