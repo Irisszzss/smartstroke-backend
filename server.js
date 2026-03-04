@@ -179,23 +179,41 @@ app.post('/register', async (req, res) => {
 });
 
 // 2. User Login (Updated to check approval)
+// Updated Login with strict Approval Check
 app.post('/login', async (req, res) => {
     const { username, password } = req.body;
     try {
-        const user = await User.findOne({ $or: [{ username: username }, { email: username }] });
+        // Find user by username or email
+        const user = await User.findOne({ 
+            $or: [
+                { username: username }, 
+                { email: username }
+            ] 
+        });
+
         if (!user) return res.status(400).json({ error: "Account not found" });
 
-        if (user.role === 'teacher' && !user.isApproved) {
-            return res.status(403).json({ error: "Your teacher account is pending admin approval." });
+        // 1. STRICT CHECK: Block unapproved teachers
+        // This ensures that even if the password is correct, they cannot enter
+        if (user.role === 'teacher' && user.isApproved !== true) {
+            return res.status(403).json({ 
+                error: "Your account is pending admin approval. Please wait for an email confirmation." 
+            });
         }
 
+        // 2. PASSWORD CHECK
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) return res.status(400).json({ error: "Invalid credentials" });
 
+        // 3. SUCCESSFUL LOGIN
         res.json({ 
-            success: true, userId: user._id, name: user.name, 
-            role: user.role, email: user.email, profilePicture: user.profilePicture,
-            firstName: user.firstName, middleInitial: user.middleInitial, surname: user.surname, username: user.username
+            success: true, 
+            userId: user._id, 
+            name: user.name,
+            role: user.role,
+            email: user.email,
+            isApproved: user.isApproved,
+            profilePicture: user.profilePicture
         });
     } catch (err) {
         res.status(500).json({ error: "Login failed" });
