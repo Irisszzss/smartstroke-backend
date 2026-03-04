@@ -296,6 +296,35 @@ app.post('/join-class', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// --- Leave Class Endpoint ---
+app.post('/class/:classId/leave', async (req, res) => {
+    const { userId } = req.body;
+    const { classId } = req.params;
+
+    try {
+        const classroom = await Classroom.findById(classId);
+        
+        if (!classroom) {
+            return res.status(404).json({ error: "Classroom not found" });
+        }
+
+        // Filter out the studentId from the array
+        classroom.students = classroom.students.filter(
+            (id) => id.toString() !== userId
+        );
+
+        await classroom.save();
+        
+        res.json({ 
+            success: true, 
+            message: "Successfully left the class" 
+        });
+    } catch (err) {
+        console.error("Leave class error:", err);
+        res.status(500).json({ error: "Internal server error while leaving class" });
+    }
+});
+
 app.get('/classes/:userId/:role', async (req, res) => {
     const { userId, role } = req.params;
     try {
