@@ -6,7 +6,7 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
-const nodemailer = require('nodemailer');
+const sgMail = require('@sendgrid/mail');
 const http = require('http'); 
 const { Server } = require('socket.io'); 
 
@@ -21,46 +21,8 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3000;
 
-// --- Email Configuration (Nodemailer) ---
-const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 587,
-    secure: false, // Must be false for port 587
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-    },
-    // Force the connection to upgrade to TLS
-    requireTLS: true,
-    // Keep the IPv4 fix to avoid the ENETUNREACH error
-    family: 4, 
-    // Timeouts to prevent the server from hanging indefinitely
-    connectionTimeout: 10000, 
-    greetingTimeout: 10000,
-    socketTimeout: 10000,
-    tls: {
-        // This helps bypass certificate matching issues on cloud hosts
-        rejectUnauthorized: false
-    }
-});
-
-// Add this to your server.js to confirm the connection on startup
-transporter.verify((error, success) => {
-    if (error) {
-        console.log("❌ Email System Error:", error.message);
-    } else {
-        console.log("📧 Email System: Ready to send messages via Port 587");
-    }
-});
-
-// Verify the connection on startup
-transporter.verify((error, success) => {
-    if (error) {
-        console.error("❌ Email System Error:", error);
-    } else {
-        console.log("📧 Email System Ready to send messages");
-    }
-});
+// --- Email Configuration (SendGrid) ---
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 // --- Middleware Configuration ---
 app.use(cors({
@@ -189,15 +151,15 @@ app.post('/register', async (req, res) => {
         await newUser.save();
 
         if (isTeacher) {
-            const mailOptions = {
-                from: process.env.EMAIL_USER,
+            const msg = {
                 to: process.env.ADMIN_EMAIL,
+                from: process.env.EMAIL_USER, 
                 subject: '🚨 SmartStroke: New Teacher Registration',
                 html: `<h3>Approval Required</h3>
                        <p>Teacher <b>${firstName} ${surname}</b> (${email}) has registered.</p>
                        <p>Please approve them using the admin endpoint.</p>`
             };
-            transporter.sendMail(mailOptions).catch(err => console.error("Mail error:", err));
+            sgMail.send(msg).catch(err => console.error("Admin notification failed:", err.response?.body || err));
         }
 
         res.json({ 
@@ -228,15 +190,14 @@ app.post('/login', async (req, res) => {
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) return res.status(400).json({ error: "Invalid credentials" });
 
-        // --- THE FIX: Send explicit name fields ---
         res.json({ 
             success: true, 
             userId: user._id, 
-            username: user.username, // Added
-            firstName: user.firstName, // Added
-            surname: user.surname,     // Added
-            middleInitial: user.middleInitial, // Added
-            name: user.name,           // Keep for compatibility
+            username: user.username, 
+            firstName: user.firstName, 
+            surname: user.surname, 
+            middleInitial: user.middleInitial, 
+            name: user.name, 
             role: user.role,
             email: user.email,
             isApproved: user.isApproved,
@@ -248,14 +209,12 @@ app.post('/login', async (req, res) => {
 });
 
 // 2. User Profile Management
-// --- Update this specific route in your backend code ---
 app.put('/user/:userId', async (req, res) => {
     const { firstName, middleInitial, surname, username, email, password } = req.body;
     try {
         const user = await User.findById(req.params.userId);
         if (!user) return res.status(404).json({ error: "User not found" });
 
-        // Update fields if provided
         if (username && username !== user.username) {
             const existing = await User.findOne({ username });
             if (existing) return res.status(400).json({ error: "Username taken" });
@@ -277,19 +236,18 @@ app.put('/user/:userId', async (req, res) => {
 
         await user.save();
 
-        // FIX: Return the full object so the frontend state stays complete
         res.json({ 
             success: true, 
             userId: user._id, 
-            username: user.username,    // Added
-            firstName: user.firstName,  // Added
-            surname: user.surname,      // Added
-            middleInitial: user.middleInitial, // Added
+            username: user.username, 
+            firstName: user.firstName, 
+            surname: user.surname, 
+            middleInitial: user.middleInitial, 
             name: user.name, 
             email: user.email,
-            role: user.role,            // Added
-            profilePicture: user.profilePicture, // Added
-            isApproved: user.isApproved // Added
+            role: user.role, 
+            profilePicture: user.profilePicture, 
+            isApproved: user.isApproved 
         });
     } catch (err) { 
         res.status(500).json({ error: err.message }); 
@@ -406,7 +364,6 @@ app.get('/admin/pending-teachers', async (req, res) => {
 app.post('/admin/approve-teacher', async (req, res) => {
     const { email } = req.body;
     try {
-        // 1. Update the database first
         const user = await User.findOneAndUpdate(
             { email, role: 'teacher' }, 
             { isApproved: true }, 
@@ -415,11 +372,10 @@ app.post('/admin/approve-teacher', async (req, res) => {
 
         if (!user) return res.status(404).json({ error: "Teacher record not found." });
 
-        // 2. Prepare the email
-        const mailOptions = {
-            from: process.env.EMAIL_USER,
+        const msg = {
             to: user.email,
-            subject: 'SmartStroke Account Approved',
+            from: process.env.EMAIL_USER, 
+            subject: '✅ SmartStroke Account Approved',
             html: `
                 <div style="font-family: sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 16px;">
                     <h2 style="color: #001BB7;">Account Authorization Successful</h2>
@@ -432,15 +388,10 @@ app.post('/admin/approve-teacher', async (req, res) => {
             `
         };
 
-        // 3. SEND EMAIL IN BACKGROUND (No 'await')
-        // This ensures the frontend gets a response immediately even if Gmail is slow/failing
-        transporter.sendMail(mailOptions).then(() => {
-            console.log(`📧 Approval email sent to: ${user.email}`);
-        }).catch(mailErr => {
-            console.error("❌ EMAIL FAILED but user was approved in DB:", mailErr);
-        });
+        sgMail.send(msg)
+            .then(() => console.log(`📧 Approval email sent to: ${user.email}`))
+            .catch(mailErr => console.error("❌ SendGrid Email Failed:", mailErr.response?.body || mailErr));
         
-        // 4. Respond to frontend immediately
         res.json({ 
             success: true, 
             message: `Account for ${email} has been successfully authorized.` 
@@ -470,8 +421,6 @@ app.get('/reset', async (req, res) => {
         res.send("Database and Files Wiped!");
     } catch (err) { res.status(500).send(err.message); }
 });
-
-
 
 // --- Server Entry Point ---
 server.listen(PORT, '0.0.0.0', () => {
