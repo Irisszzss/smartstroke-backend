@@ -394,7 +394,7 @@ app.post('/admin/approve-teacher', async (req, res) => {
         const msg = {
             to: user.email,
             from: process.env.EMAIL_USER, 
-            subject: '✅ SmartStroke Account Approved',
+            subject: 'SmartStroke Account Approved',
             html: `
                 <div style="font-family: sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 16px;">
                     <h2 style="color: #001BB7;">Account Authorization Successful</h2>
