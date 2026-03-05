@@ -96,16 +96,44 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage, limits: { fileSize: 10 * 1024 * 1024 } });
 
-// --- Socket.io Real-time Event Handlers ---
+// --- Updated Socket.io Real-time Event Handlers ---
 const activeStreams = {}; 
 
 io.on('connection', (socket) => {
-    socket.on('join-session', (classId) => socket.join(classId));
+    // 1. Handle Joining a Session
+    socket.on('join-session', (classId) => {
+        socket.join(classId);
+        console.log(`User ${socket.id} joined class: ${classId}`);
 
+        // LATE JOINER CHECK: 
+        if (activeStreams[classId]) {
+            socket.emit('stream-status', { isLive: true });
+            // FIXED: Automatically trigger a sync request when someone joins a live class
+            socket.to(activeStreams[classId]).emit('teacher-sync-request', { requesterId: socket.id });
+        }
+    });
+
+    // 2. FIXED: Bridging the "request-current-state" from Frontend
+    socket.on('request-current-state', (classId) => {
+        const teacherSocketId = activeStreams[classId];
+        if (teacherSocketId) {
+            // Tell the teacher to send their data to this specific student
+            io.to(teacherSocketId).emit('teacher-sync-request', { requesterId: socket.id });
+        }
+    });
+
+    // 3. Start Stream (Teacher Only)
     socket.on('start-stream', (classId) => {
-        activeStreams[classId] = socket.id;
+        activeStreams[classId] = socket.id; 
         io.to(classId).emit('stream-status', { isLive: true });
         io.emit('board-available', classId); 
+    });
+
+    // 4. FIXED: Bridge the data from Teacher back to the correct Student
+    // Matches the "teacher-sends-sync" emit from your frontend
+    socket.on('teacher-sends-sync', (data) => {
+        // data contains { requesterId, pages, currentPageIndex }
+        io.to(data.requesterId).emit('receive-sync-state', data);
     });
 
     socket.on('stop-stream', (classId) => {
