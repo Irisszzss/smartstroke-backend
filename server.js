@@ -385,25 +385,25 @@ app.get('/admin/pending-teachers', async (req, res) => {
 app.post('/admin/approve-teacher', async (req, res) => {
     const { email } = req.body;
     try {
-        // Find and update the teacher
+        // 1. Update the database first
         const user = await User.findOneAndUpdate(
             { email, role: 'teacher' }, 
             { isApproved: true }, 
             { new: true }
         );
 
-        if (!user) return res.status(404).json({ error: "Teacher not found" });
+        if (!user) return res.status(404).json({ error: "Teacher record not found." });
 
+        // 2. Prepare the email
         const mailOptions = {
             from: process.env.EMAIL_USER,
             to: user.email,
-            subject: '✅ SmartStroke Account Approved',
-            // Using HTML makes it look much more formal for a school
+            subject: 'SmartStroke Account Approved',
             html: `
                 <div style="font-family: sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 16px;">
                     <h2 style="color: #001BB7;">Account Authorization Successful</h2>
                     <p>Dear <b>${user.firstName} ${user.surname}</b>,</p>
-                    <p>Your educator account for the <b>SmartStroke</b> platform has been formally approved by the administrator.</p>
+                    <p>Your educator account for the <b>SmartStroke</b> platform has been formally approved.</p>
                     <p>You may now proceed to log in and manage your digital classrooms.</p>
                     <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
                     <p style="font-size: 12px; color: #64748b;">This is an automated notification from the SmartStroke Administrative System.</p>
@@ -411,13 +411,23 @@ app.post('/admin/approve-teacher', async (req, res) => {
             `
         };
 
-        // CRITICAL: We await the email so if Gmail fails, it goes to the catch block
-        await transporter.sendMail(mailOptions);
+        // 3. SEND EMAIL IN BACKGROUND (No 'await')
+        // This ensures the frontend gets a response immediately even if Gmail is slow/failing
+        transporter.sendMail(mailOptions).then(() => {
+            console.log(`📧 Approval email sent to: ${user.email}`);
+        }).catch(mailErr => {
+            console.error("❌ EMAIL FAILED but user was approved in DB:", mailErr);
+        });
         
-        res.json({ success: true, message: `Teacher ${email} approved and notified via email.` });
+        // 4. Respond to frontend immediately
+        res.json({ 
+            success: true, 
+            message: `Account for ${email} has been successfully authorized.` 
+        });
+
     } catch (err) {
-        console.error("ADMIN ERROR:", err);
-        res.status(500).json({ error: "Database updated, but email failed to send: " + err.message });
+        console.error("ADMIN APPROVAL ERROR:", err);
+        res.status(500).json({ error: "An internal server error occurred during authorization." });
     }
 });
 
