@@ -142,8 +142,12 @@ app.post('/register', async (req, res) => {
         const isTeacher = role.toLowerCase() === 'teacher';
 
         const newUser = new User({ 
-            username, email, password: hashedPassword, 
-            firstName, middleInitial, surname, 
+            username, 
+            email, 
+            password: hashedPassword, 
+            firstName, 
+            middleInitial, 
+            surname, 
             role: role.toLowerCase(),
             isApproved: !isTeacher 
         });
@@ -153,18 +157,33 @@ app.post('/register', async (req, res) => {
         if (isTeacher) {
             const msg = {
                 to: process.env.ADMIN_EMAIL,
-                from: process.env.EMAIL_USER, 
-                subject: '🚨 SmartStroke: New Teacher Registration',
-                html: `<h3>Approval Required</h3>
-                       <p>Teacher <b>${firstName} ${surname}</b> (${email}) has registered.</p>
-                       <p>Please approve them using the admin endpoint.</p>`
+                from: {
+                    email: process.env.EMAIL_USER,
+                    name: 'SmartStroke System' // Adding a name improves delivery trust
+                },
+                subject: 'SmartStroke: New Teacher Registration',
+                html: `
+                    <div style="font-family: sans-serif; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                        <h3 style="color: #001BB7;">Administrative Action Required</h3>
+                        <p>A new educator, <b>${firstName} ${surname}</b> (${email}), has registered for an account.</p>
+                        <p>This account is currently <b>pending</b>. Please access the Admin Directory to authorize or decline this request.</p>
+                        <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+                        <p style="font-size: 11px; color: #94a3b8;">Ref ID: ${newUser._id}</p>
+                    </div>
+                `
             };
-            sgMail.send(msg).catch(err => console.error("Admin notification failed:", err.response?.body || err));
+
+            // Sent via SendGrid API to avoid Render port blocks
+            sgMail.send(msg).catch(err => {
+                console.error("Admin notification failed:", err.response?.body || err);
+            });
         }
 
         res.json({ 
             success: true, 
-            message: isTeacher ? "Registration successful. Please wait for admin approval." : "Registration successful!",
+            message: isTeacher 
+                ? "Registration successful. Please wait for administrative approval." 
+                : "Registration successful!",
             isApproved: newUser.isApproved 
         });
     } catch (err) {
