@@ -301,6 +301,40 @@ app.put('/user/:userId', async (req, res) => {
     }
 });
 
+// --- Profile Picture Upload Route ---
+app.post('/user/:userId/avatar', upload.single('profilePicture'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: "No file uploaded" });
+        }
+
+        const user = await User.findById(req.params.userId);
+        if (!user) {
+            return res.status(404).json({ error: "User not found" });
+        }
+
+        // 1. Delete old profile picture if it exists to save space
+        if (user.profilePicture) {
+            const oldPath = path.join(__dirname, user.profilePicture);
+            if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+        }
+
+        // 2. Save new path (Relative to the server root)
+        const relativePath = `uploads/${req.file.filename}`;
+        user.profilePicture = relativePath;
+        await user.save();
+
+        res.json({ 
+            success: true, 
+            message: "Profile picture updated", 
+            profilePicture: relativePath 
+        });
+    } catch (err) {
+        console.error("Avatar Upload Error:", err);
+        res.status(500).json({ error: "Upload failed: " + err.message });
+    }
+});
+
 // 3. Classroom Management
 app.post('/create-class', async (req, res) => {
     const { name, teacherId } = req.body;
