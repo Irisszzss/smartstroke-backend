@@ -29,7 +29,13 @@ const transporter = nodemailer.createTransport({
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
-    }
+    },
+    // FORCE IPV4 ONLY
+    connectionTimeout: 10000, // 10 seconds
+    greetingTimeout: 10000,
+    socketTimeout: 10000,
+    dnsProjection: "ipv4first", // This tells it to prioritize IPv4
+    family: 4 // This forces the connection to use IPv4
 });
 
 // Verify the connection on startup
