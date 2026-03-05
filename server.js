@@ -374,17 +374,40 @@ app.get('/admin/pending-teachers', async (req, res) => {
 app.post('/admin/approve-teacher', async (req, res) => {
     const { email } = req.body;
     try {
-        const user = await User.findOneAndUpdate({ email, role: 'teacher' }, { isApproved: true }, { new: true });
+        // Find and update the teacher
+        const user = await User.findOneAndUpdate(
+            { email, role: 'teacher' }, 
+            { isApproved: true }, 
+            { new: true }
+        );
+
         if (!user) return res.status(404).json({ error: "Teacher not found" });
+
         const mailOptions = {
             from: process.env.EMAIL_USER,
             to: user.email,
             subject: '✅ SmartStroke Account Approved',
-            text: `Hi ${user.firstName}, your account has been approved. You can now log in!`
+            // Using HTML makes it look much more formal for a school
+            html: `
+                <div style="font-family: sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 16px;">
+                    <h2 style="color: #001BB7;">Account Authorization Successful</h2>
+                    <p>Dear <b>${user.firstName} ${user.surname}</b>,</p>
+                    <p>Your educator account for the <b>SmartStroke</b> platform has been formally approved by the administrator.</p>
+                    <p>You may now proceed to log in and manage your digital classrooms.</p>
+                    <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+                    <p style="font-size: 12px; color: #64748b;">This is an automated notification from the SmartStroke Administrative System.</p>
+                </div>
+            `
         };
-        transporter.sendMail(mailOptions).catch(err => console.error(err));
-        res.json({ success: true, message: `Teacher ${email} has been approved.` });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+
+        // CRITICAL: We await the email so if Gmail fails, it goes to the catch block
+        await transporter.sendMail(mailOptions);
+        
+        res.json({ success: true, message: `Teacher ${email} approved and notified via email.` });
+    } catch (err) {
+        console.error("ADMIN ERROR:", err);
+        res.status(500).json({ error: "Database updated, but email failed to send: " + err.message });
+    }
 });
 
 app.delete('/admin/decline-teacher/:email', async (req, res) => {
