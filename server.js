@@ -24,18 +24,33 @@ const PORT = process.env.PORT || 3000;
 // --- Email Configuration (Nodemailer) ---
 const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
-    port: 465,
-    secure: true, // Use SSL
+    port: 587,
+    secure: false, // Must be false for port 587
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
     },
-    // FORCE IPV4 ONLY
-    connectionTimeout: 10000, // 10 seconds
+    // Force the connection to upgrade to TLS
+    requireTLS: true,
+    // Keep the IPv4 fix to avoid the ENETUNREACH error
+    family: 4, 
+    // Timeouts to prevent the server from hanging indefinitely
+    connectionTimeout: 10000, 
     greetingTimeout: 10000,
     socketTimeout: 10000,
-    dnsProjection: "ipv4first", // This tells it to prioritize IPv4
-    family: 4 // This forces the connection to use IPv4
+    tls: {
+        // This helps bypass certificate matching issues on cloud hosts
+        rejectUnauthorized: false
+    }
+});
+
+// Add this to your server.js to confirm the connection on startup
+transporter.verify((error, success) => {
+    if (error) {
+        console.log("❌ Email System Error:", error.message);
+    } else {
+        console.log("📧 Email System: Ready to send messages via Port 587");
+    }
 });
 
 // Verify the connection on startup
