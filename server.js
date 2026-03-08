@@ -440,12 +440,13 @@ app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "Cloudinary upload failed" });
 
+        // 1. Find the classroom
         const classroom = await Classroom.findById(req.params.classId);
         
-        // Safety Check: If the classroom isn't found, stop here instead of crashing
+        // 2. SHIELD: If classroom is null, return 404 instead of crashing with a 500
         if (!classroom) {
-            console.error(`❌ DB Error: Class ${req.params.classId} not found in database: ${mongoose.connection.name}`);
-            return res.status(404).json({ error: "Classroom not found. Check your MONGO_URI database name." });
+            console.error(`❌ DB Mismatch: Class ${req.params.classId} not found in 'test' database.`);
+            return res.status(404).json({ error: "Classroom not found. Verify you are using the correct Class ID." });
         }
 
         const newFile = {
@@ -454,12 +455,13 @@ app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
             uploadDate: new Date()
         };
 
+        // 3. Saves
         classroom.files.push(newFile);
         await classroom.save();
 
         res.json({ message: "Success", file: classroom.files[classroom.files.length - 1] });
     } catch (err) {
-        console.error("Upload Route Error:", err.message);
+        console.error("Upload Error:", err.message);
         res.status(500).json({ error: "Internal Server Error", details: err.message });
     }
 });
