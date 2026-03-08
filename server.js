@@ -159,6 +159,14 @@ io.on('connection', (socket) => {
 
 // --- REST API Endpoints ---
 
+app.get('/', (req, res) => {
+    res.status(200).json({
+        status: "success",
+        message: "SmartStroke API is active",
+        timestamp: new Date().toISOString()
+    });
+});
+
 // 1. Authentication
 app.post('/register', async (req, res) => {
     const { username, email, password, firstName, middleInitial, surname, role } = req.body;
