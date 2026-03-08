@@ -345,6 +345,26 @@ app.post('/user/:userId/avatar', upload.single('profilePicture'), async (req, re
     }
 });
 
+// --- Route to Delete Profile Picture ---
+app.delete('/user/:userId/avatar', async (req, res) => {
+    try {
+        const user = await User.findById(req.params.userId);
+        if (!user) return res.status(404).json({ error: "User not found" });
+
+        // Reset the profilePicture field to an empty string
+        user.profilePicture = ""; 
+        await user.save();
+
+        res.json({ 
+            success: true, 
+            message: "Profile picture removed successfully",
+            profilePicture: "" 
+        });
+    } catch (err) {
+        res.status(500).json({ error: "Failed to delete avatar: " + err.message });
+    }
+});
+
 // 3. Classroom Management
 app.post('/create-class', async (req, res) => {
     const { name, teacherId } = req.body;
