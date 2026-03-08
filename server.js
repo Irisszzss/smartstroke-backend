@@ -478,15 +478,19 @@ app.delete('/class/:classId/file/:fileId', async (req, res) => {
     try {
         const classroom = await Classroom.findById(req.params.classId);
         if (!classroom) return res.status(404).json({ error: "Classroom not found" });
+
         const file = classroom.files.id(req.params.fileId);
         if (file) {
-            const filePath = path.join(__dirname, file.path);
-            if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+            // REMOVED: Local fs.unlinkSync logic that caused 500 errors
+            // In a basic Cloudinary setup, we just remove the reference from MongoDB.
             classroom.files.pull(req.params.fileId);
             await classroom.save();
         }
-        res.json({ success: true, message: "File deleted" });
-    } catch (err) { res.status(500).json({ error: "Error deleting file" }); }
+        res.json({ success: true, message: "File record removed from workspace" });
+    } catch (err) { 
+        console.error("Delete Error:", err);
+        res.status(500).json({ error: "Error deleting file: " + err.message }); 
+    }
 });
 
 // 6. Admin Management
