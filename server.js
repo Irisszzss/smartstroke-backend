@@ -438,10 +438,15 @@ app.post('/class/:classId/remove-student', async (req, res) => {
 // 5. File Management
 app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
     try {
-        if (!req.file) return res.status(400).json({ error: "No file provided" });
+        if (!req.file) return res.status(400).json({ error: "Cloudinary upload failed" });
 
         const classroom = await Classroom.findById(req.params.classId);
-        if (!classroom) return res.status(404).json({ error: "Classroom not found" });
+        
+        // Safety Check: If the classroom isn't found, stop here instead of crashing
+        if (!classroom) {
+            console.error(`❌ DB Error: Class ${req.params.classId} not found in database: ${mongoose.connection.name}`);
+            return res.status(404).json({ error: "Classroom not found. Check your MONGO_URI database name." });
+        }
 
         const newFile = {
             filename: req.body.filename || req.file.originalname,
@@ -454,14 +459,8 @@ app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
 
         res.json({ message: "Success", file: classroom.files[classroom.files.length - 1] });
     } catch (err) {
-        // FIXED LOGGING: This prevents the [object Object] error in Render logs
-        console.error("CRITICAL UPLOAD ERROR:", {
-            message: err.message,
-            stack: err.stack,
-            body: req.body,
-            file: req.file ? "File Received" : "File Missing"
-        });
-        res.status(500).json({ error: err.message });
+        console.error("Upload Route Error:", err.message);
+        res.status(500).json({ error: "Internal Server Error", details: err.message });
     }
 });
 
