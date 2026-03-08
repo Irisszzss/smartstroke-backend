@@ -444,9 +444,7 @@ app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
         if (!classroom) return res.status(404).json({ error: "Classroom not found" });
 
         const newFile = {
-            // This captures the 'filename' sent from your api.uploadFile in api.js
             filename: req.body.filename || req.file.originalname,
-            // req.file.path is the HTTPS Cloudinary URL
             path: req.file.path, 
             uploadDate: new Date()
         };
@@ -454,13 +452,16 @@ app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
         classroom.files.push(newFile);
         await classroom.save();
 
-        res.json({ 
-            message: "Success", 
-            file: classroom.files[classroom.files.length - 1] 
-        });
+        res.json({ message: "Success", file: classroom.files[classroom.files.length - 1] });
     } catch (err) {
-        console.error("Upload Route Error:", err);
-        res.status(500).json({ error: "Server failed to save: " + err.message });
+        // FIXED LOGGING: This prevents the [object Object] error in Render logs
+        console.error("CRITICAL UPLOAD ERROR:", {
+            message: err.message,
+            stack: err.stack,
+            body: req.body,
+            file: req.file ? "File Received" : "File Missing"
+        });
+        res.status(500).json({ error: err.message });
     }
 });
 
