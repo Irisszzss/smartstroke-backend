@@ -444,33 +444,29 @@ app.post('/class/:classId/remove-student', async (req, res) => {
 // 5. File Management
 app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
     try {
-        // 1. Check if file exists
         if (!req.file) return res.status(400).json({ error: "No file provided" });
 
-        // 2. Find the classroom
         const classroom = await Classroom.findById(req.params.classId);
         if (!classroom) return res.status(404).json({ error: "Classroom not found" });
 
-        // 3. Create the file object
         const newFile = {
+            // This captures the 'filename' sent from your api.uploadFile in api.js
             filename: req.body.filename || req.file.originalname,
-            // With Cloudinary, path is the full URL (e.g., https://res.cloudinary.com/...)
+            // req.file.path is the HTTPS Cloudinary URL
             path: req.file.path, 
             uploadDate: new Date()
         };
 
-        // 4. Update MongoDB
         classroom.files.push(newFile);
         await classroom.save();
 
-        // 5. Return the exact file object back to the frontend
         res.json({ 
             message: "Success", 
             file: classroom.files[classroom.files.length - 1] 
         });
     } catch (err) {
         console.error("Upload Route Error:", err);
-        res.status(500).json({ error: "Server failed to save upload: " + err.message });
+        res.status(500).json({ error: "Server failed to save: " + err.message });
     }
 });
 
@@ -479,17 +475,13 @@ app.delete('/class/:classId/file/:fileId', async (req, res) => {
         const classroom = await Classroom.findById(req.params.classId);
         if (!classroom) return res.status(404).json({ error: "Classroom not found" });
 
-        const file = classroom.files.id(req.params.fileId);
-        if (file) {
-            // REMOVED: Local fs.unlinkSync logic that caused 500 errors
-            // In a basic Cloudinary setup, we just remove the reference from MongoDB.
-            classroom.files.pull(req.params.fileId);
-            await classroom.save();
-        }
-        res.json({ success: true, message: "File record removed from workspace" });
+        // Remove the file reference from MongoDB
+        classroom.files.pull(req.params.fileId);
+        await classroom.save();
+        
+        res.json({ success: true, message: "File removed from workspace" });
     } catch (err) { 
-        console.error("Delete Error:", err);
-        res.status(500).json({ error: "Error deleting file: " + err.message }); 
+        res.status(500).json({ error: "Error deleting record" }); 
     }
 });
 
