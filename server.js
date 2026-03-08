@@ -453,7 +453,7 @@ app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
 
         // 3. Create the file object
         const newFile = {
-            filename: req.file.originalname,
+            filename: req.body.filename || req.file.originalname,
             // With Cloudinary, path is the full URL (e.g., https://res.cloudinary.com/...)
             path: req.file.path, 
             uploadDate: new Date()
