@@ -100,8 +100,11 @@ const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: {
         folder: 'smartstroke_uploads',
-        resource_type: 'auto', // Support for both Images and PDFs
-        allowed_formats: ['jpg', 'png', 'pdf']
+        resource_type: 'auto', 
+        allowed_formats: ['jpg', 'png', 'pdf'],
+        // ADD THESE TWO LINES:
+        access_mode: 'public',
+        flags: 'attachment' 
     },
 });
 
