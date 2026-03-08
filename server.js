@@ -41,12 +41,6 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Initialize file upload directory
-const uploadDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-}
-app.use('/uploads', express.static(uploadDir));
 
 // --- MongoDB Database Connection ---
 const MONGO_URI = process.env.MONGO_URI;
@@ -548,9 +542,8 @@ app.get('/reset', async (req, res) => {
     try {
         await User.deleteMany({});
         await Classroom.deleteMany({});
-        const files = fs.readdirSync(uploadDir);
-        for (const file of files) fs.unlinkSync(path.join(uploadDir, file));
-        res.send("Database and Files Wiped!");
+        // REMOVED: fs.unlinkSync logic that causes crashes on Render
+        res.send("Database Wiped! (Cloud files remain in Cloudinary)");
     } catch (err) { res.status(500).send(err.message); }
 });
 
