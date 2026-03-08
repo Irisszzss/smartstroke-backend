@@ -104,7 +104,7 @@ const storage = new CloudinaryStorage({
         allowed_formats: ['jpg', 'png', 'pdf'],
         // ADD THESE TWO LINES:
         access_mode: 'public',
-        flags: 'attachment' 
+        flags: 'inline' 
     },
 });
 
