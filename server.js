@@ -444,19 +444,33 @@ app.post('/class/:classId/remove-student', async (req, res) => {
 // 5. File Management
 app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
     try {
+        // 1. Check if file exists
+        if (!req.file) return res.status(400).json({ error: "No file provided" });
+
+        // 2. Find the classroom
         const classroom = await Classroom.findById(req.params.classId);
         if (!classroom) return res.status(404).json({ error: "Classroom not found" });
 
-        // Use req.file.path for the permanent HTTPS link
-        classroom.files.push({ 
-            filename: req.file.originalname, 
-            path: req.file.path 
-        });
-        
+        // 3. Create the file object
+        const newFile = {
+            filename: req.file.originalname,
+            // With Cloudinary, path is the full URL (e.g., https://res.cloudinary.com/...)
+            path: req.file.path, 
+            uploadDate: new Date()
+        };
+
+        // 4. Update MongoDB
+        classroom.files.push(newFile);
         await classroom.save();
-        res.json({ message: "Success", file: classroom.files[classroom.files.length - 1] });
-    } catch (err) { 
-        res.status(500).json({ error: err.message }); 
+
+        // 5. Return the exact file object back to the frontend
+        res.json({ 
+            message: "Success", 
+            file: classroom.files[classroom.files.length - 1] 
+        });
+    } catch (err) {
+        console.error("Upload Route Error:", err);
+        res.status(500).json({ error: "Server failed to save upload: " + err.message });
     }
 });
 
