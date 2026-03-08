@@ -469,13 +469,13 @@ app.delete('/class/:classId/file/:fileId', async (req, res) => {
         const classroom = await Classroom.findById(req.params.classId);
         if (!classroom) return res.status(404).json({ error: "Classroom not found" });
 
-        // Remove the file reference from MongoDB
+        // Only pull from MongoDB; Cloudinary handles the storage
         classroom.files.pull(req.params.fileId);
         await classroom.save();
         
-        res.json({ success: true, message: "File removed from workspace" });
+        res.json({ success: true, message: "File record removed" });
     } catch (err) { 
-        res.status(500).json({ error: "Error deleting record" }); 
+        res.status(500).json({ error: "Delete failed" }); 
     }
 });
 
