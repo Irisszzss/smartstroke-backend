@@ -453,24 +453,51 @@ app.post('/class/:classId/remove-student', async (req, res) => {
 // 5. File Management
 app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
     try {
-        if (!req.file) return res.status(400).json({ error: "Cloudinary upload failed" });
+        // 1. Check if the file actually reached the server
+        if (!req.file) {
+            console.error("❌ Multer/Cloudinary failed to provide a file object.");
+            return res.status(400).json({ error: "No file received. Check if your frontend FormData key is 'pdf'." });
+        }
 
+        // 2. Find the classroom in the database
         const classroom = await Classroom.findById(req.params.classId);
-        if (!classroom) return res.status(404).json({ error: "Classroom not found" });
+        
+        // 3. SHIELD: If classroom is null, we must stop here to prevent a crash
+        if (!classroom) {
+            console.error(`❌ DB Error: Classroom with ID ${req.params.classId} not found.`);
+            return res.status(404).json({ error: "Classroom not found. Please refresh your dashboard." });
+        }
 
+        // 4. Construct the new file object
+        // req.file.path is the Cloudinary URL
+        // req.file.filename is the Cloudinary Public ID (needed for deletion)
         const newFile = {
             filename: req.body.filename || req.file.originalname,
             path: req.file.path, 
-            cloudinaryId: req.file.filename, // <--- SAVE THE CLOUDINARY ID HERE
+            cloudinaryId: req.file.filename, 
             uploadDate: new Date()
         };
 
+        // 5. Save to MongoDB
         classroom.files.push(newFile);
         await classroom.save();
 
-        res.json({ message: "Success", file: classroom.files[classroom.files.length - 1] });
+        console.log("✅ File uploaded and saved to DB:", newFile.filename);
+
+        // 6. Return the last file added (the one we just created)
+        res.json({ 
+            success: true, 
+            message: "File uploaded successfully", 
+            file: classroom.files[classroom.files.length - 1] 
+        });
+
     } catch (err) {
-        res.status(500).json({ error: "Internal Server Error", details: err.message });
+        // This will print the exact error in your Render logs
+        console.error("🔥 Server Crash Error during upload:", err); 
+        res.status(500).json({ 
+            error: "Internal Server Error", 
+            details: err.message 
+        });
     }
 });
 
