@@ -62,6 +62,7 @@ const UserSchema = new mongoose.Schema({
     surname: { type: String, required: true },
     role: { type: String, enum: ['teacher', 'student'], required: true },
     profilePicture: { type: String, default: "" },
+    avatarCloudinaryId: { type: String, default: "" },
     isApproved: { type: Boolean, default: false }
 }, { 
     toJSON: { virtuals: true }, 
@@ -83,6 +84,7 @@ const ClassSchema = new mongoose.Schema({
     files: [{
         filename: String,
         path: String, 
+        cloudinaryId: String,
         uploadDate: { type: Date, default: Date.now }
     }]
 }, { timestamps: true });
@@ -328,13 +330,20 @@ app.post('/user/:userId/avatar', upload.single('profilePicture'), async (req, re
         const user = await User.findById(req.params.userId);
         if (!user) return res.status(404).json({ error: "User not found" });
 
-        // Save the Cloudinary URL (req.file.path) to your database
-        user.profilePicture = req.file.path; 
+        // --- CLEANUP OLD IMAGE ---
+        // If the user already has an avatarCloudinaryId, delete it from the cloud
+        if (user.avatarCloudinaryId) {
+            await cloudinary.uploader.destroy(user.avatarCloudinaryId);
+        }
+
+        // --- SAVE NEW IMAGE ---
+        user.profilePicture = req.file.path; // The URL
+        user.avatarCloudinaryId = req.file.filename; // The Cloudinary public_id
         await user.save();
 
         res.json({ 
             success: true, 
-            message: "Profile picture updated in cloud", 
+            message: "Profile picture updated and old file purged", 
             profilePicture: user.profilePicture 
         });
     } catch (err) {
@@ -348,13 +357,19 @@ app.delete('/user/:userId/avatar', async (req, res) => {
         const user = await User.findById(req.params.userId);
         if (!user) return res.status(404).json({ error: "User not found" });
 
-        // Reset the profilePicture field to an empty string
+        // 1. Delete from Cloudinary if an ID exists
+        if (user.avatarCloudinaryId) {
+            await cloudinary.uploader.destroy(user.avatarCloudinaryId);
+        }
+
+        // 2. Clear fields in MongoDB
         user.profilePicture = ""; 
+        user.avatarCloudinaryId = ""; 
         await user.save();
 
         res.json({ 
             success: true, 
-            message: "Profile picture removed successfully",
+            message: "Profile picture removed from cloud and database",
             profilePicture: "" 
         });
     } catch (err) {
@@ -440,44 +455,50 @@ app.post('/upload/:classId', upload.single('pdf'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "Cloudinary upload failed" });
 
-        // 1. Find the classroom
         const classroom = await Classroom.findById(req.params.classId);
-        
-        // 2. SHIELD: If classroom is null, return 404 instead of crashing with a 500
-        if (!classroom) {
-            console.error(`❌ DB Mismatch: Class ${req.params.classId} not found in 'test' database.`);
-            return res.status(404).json({ error: "Classroom not found. Verify you are using the correct Class ID." });
-        }
+        if (!classroom) return res.status(404).json({ error: "Classroom not found" });
 
         const newFile = {
             filename: req.body.filename || req.file.originalname,
             path: req.file.path, 
+            cloudinaryId: req.file.filename, // <--- SAVE THE CLOUDINARY ID HERE
             uploadDate: new Date()
         };
 
-        // 3. Saves
         classroom.files.push(newFile);
         await classroom.save();
 
         res.json({ message: "Success", file: classroom.files[classroom.files.length - 1] });
     } catch (err) {
-        console.error("Upload Error:", err.message);
         res.status(500).json({ error: "Internal Server Error", details: err.message });
     }
 });
 
 app.delete('/class/:classId/file/:fileId', async (req, res) => {
     try {
-        const classroom = await Classroom.findById(req.params.classId);
+        const { classId, fileId } = req.params;
+        
+        // 1. Find the classroom
+        const classroom = await Classroom.findById(classId);
         if (!classroom) return res.status(404).json({ error: "Classroom not found" });
 
-        // Only pull from MongoDB; Cloudinary handles the storage
-        classroom.files.pull(req.params.fileId);
+        // 2. Find the specific file inside the classroom array
+        const file = classroom.files.id(fileId);
+        if (!file) return res.status(404).json({ error: "File record not found" });
+
+        // 3. Delete from Cloudinary using the stored ID
+        if (file.cloudinaryId) {
+            await cloudinary.uploader.destroy(file.cloudinaryId);
+        }
+
+        // 4. Remove the file record from the MongoDB array
+        classroom.files.pull(fileId);
         await classroom.save();
         
-        res.json({ success: true, message: "File record removed" });
+        res.json({ success: true, message: "File deleted from Cloud and Database" });
     } catch (err) { 
-        res.status(500).json({ error: "Delete failed" }); 
+        console.error("Delete Error:", err);
+        res.status(500).json({ error: "Delete failed: " + err.message }); 
     }
 });
 
