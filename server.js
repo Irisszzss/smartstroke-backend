@@ -108,14 +108,16 @@ io.on('connection', (socket) => {
         // LATE JOINER CHECK: 
         if (activeStreams[classId]) {
             socket.emit('stream-status', { isLive: true });
+            // FIXED: Automatically trigger a sync request when someone joins a live class
             socket.to(activeStreams[classId]).emit('teacher-sync-request', { requesterId: socket.id });
         }
     });
 
-    // 2. Bridging the "request-current-state" from Frontend
+    // 2. FIXED: Bridging the "request-current-state" from Frontend
     socket.on('request-current-state', (classId) => {
         const teacherSocketId = activeStreams[classId];
         if (teacherSocketId) {
+            // Tell the teacher to send their data to this specific student
             io.to(teacherSocketId).emit('teacher-sync-request', { requesterId: socket.id });
         }
     });
@@ -124,51 +126,15 @@ io.on('connection', (socket) => {
     socket.on('start-stream', (classId) => {
         activeStreams[classId] = socket.id; 
         io.to(classId).emit('stream-status', { isLive: true });
-        // This alerts the Pi (python-ping) that the board is ready for connection
         io.emit('board-available', classId); 
     });
 
-    // 4. Bridge the data from Teacher back to the correct Student
+    // 4. FIXED: Bridge the data from Teacher back to the correct Student
+    // Matches the "teacher-sends-sync" emit from your frontend
     socket.on('teacher-sends-sync', (data) => {
+        // data contains { requesterId, pages, currentPageIndex }
         io.to(data.requesterId).emit('receive-sync-state', data);
     });
-
-    // --- NEW: PI-SPECIFIC HANDLERS FOR HEADLESS DEMO ---
-
-    // 5. Forward the "No LCD" Setup Feed from Pi to Teacher Dashboard
-    socket.on('camera-setup-feed', (data) => {
-        // Broadcast the Base64 image frame to the teacher's dashboard
-        socket.to(data.classId).emit('camera-setup-feed', data);
-    });
-
-    // 6. Forward Control Commands from Dashboard to Pi
-    socket.on('start-session', (data) => {
-        // Tells the Pi to set SESSION_ACTIVE = True and start processing
-        socket.to(data.classId).emit('start-session', data);
-        console.log(`🎬 Activation command sent to Pi for: ${data.classId}`);
-    });
-
-    socket.on('stop-session', (data) => {
-        // Tells the Pi to stop the camera loop and go to standby
-        socket.to(data.classId).emit('stop-session');
-        console.log(`🛑 Standby command sent to Pi for: ${data.classId}`);
-    });
-
-    // --- CORE TRACKING HANDLERS ---
-
-    socket.on('transmit-cv-pos', (data) => {
-        socket.to(data.classId).emit('receive-cv-pos', { x: data.x, y: data.y });
-    });
-
-    socket.on('transmit-stroke', (data) => {
-        socket.to(data.classId).emit('receive-stroke', data);
-    });
-
-    socket.on('transmit-action', (data) => {
-        socket.to(data.classId).emit('receive-action', data);
-    });
-
-    // --- STREAM CLEANUP ---
 
     socket.on('stop-stream', (classId) => {
         if (activeStreams[classId] === socket.id) {
@@ -176,6 +142,10 @@ io.on('connection', (socket) => {
             io.to(classId).emit('stream-status', { isLive: false });
         }
     });
+
+    socket.on('transmit-cv-pos', (data) => socket.to(data.classId).emit('receive-cv-pos', { x: data.x, y: data.y }));
+    socket.on('transmit-stroke', (data) => socket.to(data.classId).emit('receive-stroke', data));
+    socket.on('transmit-action', (data) => socket.to(data.classId).emit('receive-action', data));
 
     socket.on('disconnect', () => {
         for (const classId in activeStreams) {
