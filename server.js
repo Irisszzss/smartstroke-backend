@@ -21,10 +21,8 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3000;
 
-// --- Email Configuration (SendGrid) ---
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-// --- Middleware Configuration ---
 app.use(cors({
     origin: "*", 
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -32,7 +30,6 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Initialize file upload directory
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
@@ -42,11 +39,11 @@ app.use('/uploads', express.static(uploadDir));
 // --- MongoDB Database Connection ---
 const MONGO_URI = process.env.MONGO_URI;
 if (!MONGO_URI) {
-    console.error("❌ MONGO_URI is missing! Check your .env file.");
+    console.error("MONGO_URI is missing! Check your .env file.");
 } else {
     mongoose.connect(MONGO_URI)
-        .then(() => console.log("✅ MongoDB Connected Successfully"))
-        .catch(err => console.error("❌ MongoDB Connection Error:", err));
+        .then(() => console.log("MongoDB Connected Successfully"))
+        .catch(err => console.error("MongoDB Connection Error:", err));
 }
 
 // --- Data Schemas & Models ---
@@ -96,43 +93,36 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage, limits: { fileSize: 10 * 1024 * 1024 } });
 
-// --- Updated Socket.io Real-time Event Handlers ---
 const activeStreams = {}; 
 
 io.on('connection', (socket) => {
-    // 1. Handle Joining a Session
     socket.on('join-session', (classId) => {
         socket.join(classId);
         console.log(`User ${socket.id} joined class: ${classId}`);
 
-        // LATE JOINER CHECK: 
+        io.emit('camera-auto-join', { classId: classId });
+
         if (activeStreams[classId]) {
             socket.emit('stream-status', { isLive: true });
-            // FIXED: Automatically trigger a sync request when someone joins a live class
             socket.to(activeStreams[classId]).emit('teacher-sync-request', { requesterId: socket.id });
         }
     });
 
-    // 2. FIXED: Bridging the "request-current-state" from Frontend
     socket.on('request-current-state', (classId) => {
         const teacherSocketId = activeStreams[classId];
         if (teacherSocketId) {
-            // Tell the teacher to send their data to this specific student
             io.to(teacherSocketId).emit('teacher-sync-request', { requesterId: socket.id });
         }
     });
 
-    // 3. Start Stream (Teacher Only)
     socket.on('start-stream', (classId) => {
         activeStreams[classId] = socket.id; 
         io.to(classId).emit('stream-status', { isLive: true });
         io.emit('board-available', classId); 
+        io.emit('camera-auto-join', { classId: classId });
     });
 
-    // 4. FIXED: Bridge the data from Teacher back to the correct Student
-    // Matches the "teacher-sends-sync" emit from your frontend
     socket.on('teacher-sends-sync', (data) => {
-        // data contains { requesterId, pages, currentPageIndex }
         io.to(data.requesterId).emit('receive-sync-state', data);
     });
 
@@ -195,7 +185,7 @@ app.post('/register', async (req, res) => {
                 to: process.env.ADMIN_EMAIL,
                 from: {
                     email: process.env.EMAIL_USER,
-                    name: 'SmartStroke System' // Adding a name improves delivery trust
+                    name: 'SmartStroke System'
                 },
                 subject: 'SmartStroke: New Teacher Registration',
                 html: `
@@ -209,7 +199,6 @@ app.post('/register', async (req, res) => {
                 `
             };
 
-            // Sent via SendGrid API to avoid Render port blocks
             sgMail.send(msg).catch(err => {
                 console.error("Admin notification failed:", err.response?.body || err);
             });
@@ -321,13 +310,11 @@ app.post('/user/:userId/avatar', upload.single('profilePicture'), async (req, re
             return res.status(404).json({ error: "User not found" });
         }
 
-        // 1. Delete old profile picture if it exists to save space
         if (user.profilePicture) {
             const oldPath = path.join(__dirname, user.profilePicture);
             if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
         }
 
-        // 2. Save new path (Relative to the server root)
         const relativePath = `uploads/${req.file.filename}`;
         user.profilePicture = relativePath;
         await user.save();
@@ -513,5 +500,5 @@ app.get('/reset', async (req, res) => {
 
 // --- Server Entry Point ---
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 SmartStroke Server running on port ${PORT}`);
+    console.log(`Yey, SmartStroke Server running on port ${PORT}`);
 });
